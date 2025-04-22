@@ -5,6 +5,7 @@ import {
   ClmmPoolUtil,
   TickMath,
   Percentage,
+  adjustForCoinSlippage,
 } from "@cetusprotocol/cetus-sui-clmm-sdk";
 import type { WalletContextState } from "@suiet/wallet-kit";
 import type { PoolInfo } from "./coinGeckoService";
@@ -147,115 +148,6 @@ function guessTokenDecimals(coinType: string): number {
     `Could not determine decimals for ${coinType}, using default of 9`
   );
   return 9;
-}
-
-/**
- * Get position info with compatibility for different SDK versions
- */
-async function getPositionInfoCompat(
-  sdk: any,
-  positionId: string
-): Promise<any> {
-  console.log(`Fetching position info for: ${positionId}`);
-
-  // Try various possible method names
-  const methods = [
-    "getPosition",
-    "getPositionInfo",
-    "getNft",
-    "getPositionNft",
-  ];
-
-  for (const method of methods) {
-    if (typeof sdk.Position[method] === "function") {
-      try {
-        console.log(`Trying method ${method}`);
-        const position = await sdk.Position[method](positionId);
-        console.log(`Successfully fetched position with ${method}:`, position);
-        return position;
-      } catch (err) {
-        console.warn(`Method ${method} failed:`, err);
-      }
-    }
-  }
-
-  // If all the standard methods failed, try direct API call as last resort
-  try {
-    console.log("Attempting direct API call as fallback");
-    const posObject = await sdk.fullClient.getObject({
-      id: positionId,
-      options: { showContent: true, showDisplay: true },
-    });
-    console.log("Got position via direct API call:", posObject);
-    return posObject.data;
-  } catch (err) {
-    console.error("All position fetching methods failed:", err);
-    throw new Error(
-      `Failed to fetch position ${positionId} with all available methods`
-    );
-  }
-}
-
-/**
- * Calculate minimum token amounts based on slippage for removing liquidity
- */
-async function calculateMinAmountsForRemoval(
-  sdk: any,
-  pool: any,
-  position: any,
-  liquidityAmount: string,
-  slippagePercent: number
-): Promise<{ minAmountA: string; minAmountB: string }> {
-  try {
-    // Convert liquidity amount to BN
-    const liquidity = new BN(liquidityAmount);
-
-    // Get tick data
-    const lowerSqrtPrice = TickMath.tickIndexToSqrtPriceX64(
-      position.tick_lower_index
-    );
-    const upperSqrtPrice = TickMath.tickIndexToSqrtPriceX64(
-      position.tick_upper_index
-    );
-
-    // Current sqrt price
-    const curSqrtPrice = new BN(pool.current_sqrt_price);
-
-    // Calculate token amounts from liquidity
-    const coinAmounts = ClmmPoolUtil.getCoinAmountFromLiquidity(
-      liquidity,
-      curSqrtPrice,
-      lowerSqrtPrice,
-      upperSqrtPrice,
-      false
-    );
-
-    // Apply slippage
-    const slippageTolerance = new Percentage(
-      new BN(slippagePercent),
-      new BN(100)
-    );
-
-    // Adjust token amounts for slippage
-    const adjustedAmounts = ClmmPoolUtil.adjustForSlippage(
-      coinAmounts,
-      slippageTolerance,
-      false // false for removal (we want minimums)
-    );
-
-    return {
-      minAmountA: adjustedAmounts.tokenMaxA.toString(),
-      minAmountB: adjustedAmounts.tokenMaxB.toString(),
-    };
-  } catch (error) {
-    console.error("Error calculating min amounts:", error);
-
-    // Fallback: use very low minimums (0) if calculation fails
-    return {
-      minAmountA: "0",
-      minAmountB: "0",
-    };
-  }
 }
 
 /**
@@ -577,6 +469,7 @@ export async function deposit(
 
 /**
  * Remove liquidity from a position.
+ * Based on the implementation pattern from Cetus documentation.
  * @param liquidityPercentage 0-100 percentage of liquidity to remove
  */
 export async function removeLiquidity(
@@ -593,83 +486,146 @@ export async function removeLiquidity(
   const sdk = getSdkWithWallet(address);
 
   try {
-    // First try to get position info to determine the correct pool ID
-    console.log(`Fetching position information for ID: ${positionId}`);
+    console.log(`Fetching position and pool data for position: ${positionId}`);
 
-    // Use compatibility function to get position info
-    const position = await getPositionInfoCompat(sdk, positionId);
+    // 1. Get position info - try different methods based on SDK version
+    let position;
+    let gotPosition = false;
 
-    if (!position) {
-      throw new Error("Position not found");
+    // Try getPositionInfo first (original method)
+    try {
+      position = await sdk.Position.getPositionInfo(positionId);
+      gotPosition = true;
+    } catch (e) {
+      console.log("getPositionInfo failed, trying alternatives:", e);
     }
 
-    // Use the pool ID from position data rather than the one passed in
-    // Try different property names based on SDK version
+    // Try getPosition (alternative method)
+    if (!gotPosition) {
+      try {
+        position = await sdk.Position.getPosition(positionId);
+        gotPosition = true;
+      } catch (e) {
+        console.log("getPosition failed, trying alternatives:", e);
+      }
+    }
+
+    // Try getNft (another alternative)
+    if (!gotPosition) {
+      try {
+        position = await sdk.Position.getNft(positionId);
+        gotPosition = true;
+      } catch (e) {
+        console.log("getNft failed, trying alternatives:", e);
+      }
+    }
+
+    // Direct object fetch as last resort
+    if (!gotPosition) {
+      try {
+        const obj = await sdk.fullClient.getObject({
+          id: positionId,
+          options: { showContent: true },
+        });
+        if (obj.data) {
+          position = obj.data;
+          gotPosition = true;
+        }
+      } catch (e) {
+        console.error("All position fetching methods failed:", e);
+      }
+    }
+
+    if (!position) {
+      throw new Error(`Could not fetch position data for ID: ${positionId}`);
+    }
+
+    console.log("Position data:", position);
+
+    // Find the actual pool ID (may be different property names in different SDK versions)
     const actualPoolId =
       position.pool_id || position.poolAddress || position.poolId || poolId;
     if (!actualPoolId) {
-      throw new Error("Position doesn't have an associated pool");
+      throw new Error("Position doesn't have an associated pool ID");
     }
 
-    console.log(`Using pool ID from position data: ${actualPoolId}`);
+    console.log(`Using pool ID: ${actualPoolId}`);
 
-    // Get pool information
+    // 2. Fetch pool data
     const pool = await sdk.Pool.getPool(actualPoolId);
     if (!pool) {
-      throw new Error("Pool not found");
+      throw new Error(`Pool not found for ID: ${actualPoolId}`);
     }
 
+    console.log("Pool data:", pool);
+
+    // Ensure position has liquidity
     if (!position.liquidity || position.liquidity === "0") {
-      throw new Error("Position has no liquidity");
+      throw new Error("Position has no liquidity to remove");
     }
 
-    console.log("Position details:", position);
-
-    // Calculate liquidity amount to remove (percentage of total)
-    const totalLiquidity = position.liquidity;
-    const liquidityToRemove = Math.floor(
-      Number(totalLiquidity) * (liquidityPercentage / 100)
-    ).toString();
+    // 3. Calculate liquidity amount based on percentage
+    const totalLiquidity = new BN(position.liquidity);
+    const liquidityToRemove = totalLiquidity
+      .muln(liquidityPercentage)
+      .divn(100);
 
     console.log(
-      `Removing ${liquidityPercentage}% of liquidity: ${liquidityToRemove} of ${totalLiquidity}`
+      `Removing ${liquidityPercentage}% of liquidity: ${liquidityToRemove.toString()} of ${totalLiquidity.toString()}`
     );
 
-    // Calculate minimum amounts based on slippage
-    console.log("Calculating minimum token amounts with slippage");
-    const { minAmountA, minAmountB } = await calculateMinAmountsForRemoval(
-      sdk,
-      pool,
-      position,
+    // 4. Calculate minimum output amounts with slippage protection
+    const lowerSqrtPrice = TickMath.tickIndexToSqrtPriceX64(
+      position.tick_lower_index
+    );
+    const upperSqrtPrice = TickMath.tickIndexToSqrtPriceX64(
+      position.tick_upper_index
+    );
+    const curSqrtPrice = new BN(pool.current_sqrt_price);
+
+    // Get token amounts from liquidity
+    const coinAmounts = ClmmPoolUtil.getCoinAmountFromLiquidity(
       liquidityToRemove,
-      5 // 5% slippage
+      curSqrtPrice,
+      lowerSqrtPrice,
+      upperSqrtPrice,
+      false // roundUp flag
+    );
+
+    // Apply slippage tolerance to get minimum amounts
+    const slippageTolerance = new Percentage(new BN(5), new BN(100)); // 5% slippage
+    const { tokenMaxA, tokenMaxB } = adjustForCoinSlippage(
+      coinAmounts,
+      slippageTolerance,
+      false // isAdd: false for removal
     );
 
     console.log(
-      `Minimum amounts with slippage: ${minAmountA} (token A), ${minAmountB} (token B)`
+      `Min amount A: ${tokenMaxA.toString()}, Min amount B: ${tokenMaxB.toString()}`
     );
 
-    // Use the removeLiquidityTransactionPayload method
+    // 5. Prepare removal parameters
     const removeLiquidityParams = {
       coinTypeA: pool.coinTypeA,
       coinTypeB: pool.coinTypeB,
-      position_id: positionId,
       pool_id: actualPoolId,
-      delta_liquidity: liquidityToRemove,
-      min_amount_a: minAmountA,
-      min_amount_b: minAmountB,
-      collect_fee: true, // Collect fees when removing liquidity
+      position_id: positionId,
+      delta_liquidity: liquidityToRemove.toString(),
+      min_amount_a: tokenMaxA.toString(),
+      min_amount_b: tokenMaxB.toString(),
+      collect_fee: true, // Collect fees while removing liquidity
     };
 
     console.log("Removing liquidity with params:", removeLiquidityParams);
-    const removeLiquidityTx =
-      await sdk.Position.removeLiquidityTransactionPayload(
-        removeLiquidityParams
-      );
+
+    // 6. Create and submit transaction
+    const txPayload = await sdk.Position.removeLiquidityTransactionPayload(
+      removeLiquidityParams
+    );
 
     console.log("Sending remove liquidity transaction");
     const removeLiquidityRes = await wallet.signAndExecuteTransactionBlock({
-      transactionBlock: removeLiquidityTx,
+      transactionBlock: txPayload,
       options: {
         showEffects: true,
         showEvents: true,
@@ -704,54 +660,118 @@ export async function closePosition(
   const sdk = getSdkWithWallet(address);
 
   try {
-    // First try to get position info to determine the correct pool ID
-    console.log(`Fetching position information for ID: ${positionId}`);
+    console.log(`Fetching position and pool data for position: ${positionId}`);
 
-    // Use compatibility function to get position info
-    const position = await getPositionInfoCompat(sdk, positionId);
+    // 1. Get position info - try different methods based on SDK version
+    let position;
+    let gotPosition = false;
 
-    if (!position) {
-      throw new Error("Position not found");
+    // Try getPositionInfo first (original method)
+    try {
+      position = await sdk.Position.getPositionInfo(positionId);
+      gotPosition = true;
+    } catch (e) {
+      console.log("getPositionInfo failed, trying alternatives:", e);
     }
 
-    // Use the pool ID from position data rather than the one passed in
-    // Try different property names based on SDK version
+    // Try getPosition (alternative method)
+    if (!gotPosition) {
+      try {
+        position = await sdk.Position.getPosition(positionId);
+        gotPosition = true;
+      } catch (e) {
+        console.log("getPosition failed, trying alternatives:", e);
+      }
+    }
+
+    // Try getNft (another alternative)
+    if (!gotPosition) {
+      try {
+        position = await sdk.Position.getNft(positionId);
+        gotPosition = true;
+      } catch (e) {
+        console.log("getNft failed, trying alternatives:", e);
+      }
+    }
+
+    // Direct object fetch as last resort
+    if (!gotPosition) {
+      try {
+        const obj = await sdk.fullClient.getObject({
+          id: positionId,
+          options: { showContent: true },
+        });
+        if (obj.data) {
+          position = obj.data;
+          gotPosition = true;
+        }
+      } catch (e) {
+        console.error("All position fetching methods failed:", e);
+      }
+    }
+
+    if (!position) {
+      throw new Error(`Could not fetch position data for ID: ${positionId}`);
+    }
+
+    console.log("Position data:", position);
+
+    // Find the actual pool ID (may be different property names in different SDK versions)
     const actualPoolId =
       position.pool_id || position.poolAddress || position.poolId || poolId;
     if (!actualPoolId) {
-      throw new Error("Position doesn't have an associated pool");
+      throw new Error("Position doesn't have an associated pool ID");
     }
 
-    console.log(`Using pool ID from position data: ${actualPoolId}`);
+    console.log(`Using pool ID: ${actualPoolId}`);
 
-    // Get pool information
+    // 2. Fetch pool data
     const pool = await sdk.Pool.getPool(actualPoolId);
     if (!pool) {
-      throw new Error("Pool not found");
+      throw new Error(`Pool not found for ID: ${actualPoolId}`);
     }
 
-    console.log("Position details:", position);
+    console.log("Pool data:", pool);
 
-    // Check if position has any liquidity
-    if (!position.liquidity || position.liquidity === "0") {
-      console.log("Position has no liquidity, proceeding with close only");
-    }
-
-    // Calculate minimum amounts based on slippage
+    // 3. Calculate minimum amounts based on slippage
     console.log("Calculating minimum token amounts with slippage");
-    const { minAmountA, minAmountB } = await calculateMinAmountsForRemoval(
-      sdk,
-      pool,
-      position,
-      position.liquidity || "0",
-      5 // 5% slippage
+
+    // Set up variables for calculation
+    const totalLiquidity = position.liquidity
+      ? new BN(position.liquidity)
+      : new BN(0);
+    const lowerSqrtPrice = TickMath.tickIndexToSqrtPriceX64(
+      position.tick_lower_index
+    );
+    const upperSqrtPrice = TickMath.tickIndexToSqrtPriceX64(
+      position.tick_upper_index
+    );
+    const curSqrtPrice = new BN(pool.current_sqrt_price);
+
+    // Calculate expected token amounts
+    const coinAmounts = totalLiquidity.isZero()
+      ? { amount_a: new BN(0), amount_b: new BN(0) }
+      : ClmmPoolUtil.getCoinAmountFromLiquidity(
+          totalLiquidity,
+          curSqrtPrice,
+          lowerSqrtPrice,
+          upperSqrtPrice,
+          false
+        );
+
+    // Apply slippage tolerance
+    const slippageTolerance = new Percentage(new BN(5), new BN(100)); // 5% slippage
+    const { tokenMaxA, tokenMaxB } = adjustForCoinSlippage(
+      coinAmounts,
+      slippageTolerance,
+      false // isAdd: false for removal
     );
 
     console.log(
-      `Minimum amounts with slippage: ${minAmountA} (token A), ${minAmountB} (token B)`
+      `Minimum amounts with slippage: ${tokenMaxA.toString()} (token A), ${tokenMaxB.toString()} (token B)`
     );
 
-    // Get all rewards for this position
+    // 4. Get all rewards for this position
     console.log("Fetching rewards for position");
     let rewarderCoinTypes: string[] = [];
     try {
@@ -772,14 +792,14 @@ export async function closePosition(
       console.error("Error fetching rewards:", error);
     }
 
-    // Build close position params
+    // 5. Build close position params
     const closePositionParams = {
       coinTypeA: pool.coinTypeA,
       coinTypeB: pool.coinTypeB,
       pool_id: actualPoolId,
       pos_id: positionId,
-      min_amount_a: minAmountA,
-      min_amount_b: minAmountB,
+      min_amount_a: tokenMaxA.toString(),
+      min_amount_b: tokenMaxB.toString(),
       rewarder_coin_types: rewarderCoinTypes,
     };
 
@@ -825,33 +845,80 @@ export async function collectFees(
   const sdk = getSdkWithWallet(address);
 
   try {
-    // First try to get position info to determine the correct pool ID
-    console.log(`Fetching position information for ID: ${positionId}`);
+    console.log(`Fetching position and pool data for position: ${positionId}`);
 
-    // Use compatibility function to get position info
-    const position = await getPositionInfoCompat(sdk, positionId);
+    // 1. Get position info - try different methods based on SDK version
+    let position;
+    let gotPosition = false;
 
-    if (!position) {
-      throw new Error("Position not found");
+    // Try getPositionInfo first (original method)
+    try {
+      position = await sdk.Position.getPositionInfo(positionId);
+      gotPosition = true;
+    } catch (e) {
+      console.log("getPositionInfo failed, trying alternatives:", e);
     }
 
-    // Use the pool ID from position data rather than the one passed in
-    // Try different property names based on SDK version
+    // Try getPosition (alternative method)
+    if (!gotPosition) {
+      try {
+        position = await sdk.Position.getPosition(positionId);
+        gotPosition = true;
+      } catch (e) {
+        console.log("getPosition failed, trying alternatives:", e);
+      }
+    }
+
+    // Try getNft (another alternative)
+    if (!gotPosition) {
+      try {
+        position = await sdk.Position.getNft(positionId);
+        gotPosition = true;
+      } catch (e) {
+        console.log("getNft failed, trying alternatives:", e);
+      }
+    }
+
+    // Direct object fetch as last resort
+    if (!gotPosition) {
+      try {
+        const obj = await sdk.fullClient.getObject({
+          id: positionId,
+          options: { showContent: true },
+        });
+        if (obj.data) {
+          position = obj.data;
+          gotPosition = true;
+        }
+      } catch (e) {
+        console.error("All position fetching methods failed:", e);
+      }
+    }
+
+    if (!position) {
+      throw new Error(`Could not fetch position data for ID: ${positionId}`);
+    }
+
+    console.log("Position data:", position);
+
+    // Find the actual pool ID (may be different property names in different SDK versions)
     const actualPoolId =
       position.pool_id || position.poolAddress || position.poolId || poolId;
     if (!actualPoolId) {
-      throw new Error("Position doesn't have an associated pool");
+      throw new Error("Position doesn't have an associated pool ID");
     }
 
-    console.log(`Using pool ID from position data: ${actualPoolId}`);
+    console.log(`Using pool ID: ${actualPoolId}`);
 
-    // Get pool information
+    // 2. Fetch pool data
     const pool = await sdk.Pool.getPool(actualPoolId);
     if (!pool) {
-      throw new Error("Pool not found");
+      throw new Error(`Pool not found for ID: ${actualPoolId}`);
     }
 
-    // Build collect fees params
+    console.log("Pool data:", pool);
+
+    // 3. Build collect fees params
     const collectFeesParams = {
       coinTypeA: pool.coinTypeA,
       coinTypeB: pool.coinTypeB,
@@ -898,33 +965,80 @@ export async function collectRewards(
   const sdk = getSdkWithWallet(address);
 
   try {
-    // First try to get position info to determine the correct pool ID
-    console.log(`Fetching position information for ID: ${positionId}`);
+    console.log(`Fetching position and pool data for position: ${positionId}`);
 
-    // Use compatibility function to get position info
-    const position = await getPositionInfoCompat(sdk, positionId);
+    // 1. Get position info - try different methods based on SDK version
+    let position;
+    let gotPosition = false;
 
-    if (!position) {
-      throw new Error("Position not found");
+    // Try getPositionInfo first (original method)
+    try {
+      position = await sdk.Position.getPositionInfo(positionId);
+      gotPosition = true;
+    } catch (e) {
+      console.log("getPositionInfo failed, trying alternatives:", e);
     }
 
-    // Use the pool ID from position data rather than the one passed in
-    // Try different property names based on SDK version
+    // Try getPosition (alternative method)
+    if (!gotPosition) {
+      try {
+        position = await sdk.Position.getPosition(positionId);
+        gotPosition = true;
+      } catch (e) {
+        console.log("getPosition failed, trying alternatives:", e);
+      }
+    }
+
+    // Try getNft (another alternative)
+    if (!gotPosition) {
+      try {
+        position = await sdk.Position.getNft(positionId);
+        gotPosition = true;
+      } catch (e) {
+        console.log("getNft failed, trying alternatives:", e);
+      }
+    }
+
+    // Direct object fetch as last resort
+    if (!gotPosition) {
+      try {
+        const obj = await sdk.fullClient.getObject({
+          id: positionId,
+          options: { showContent: true },
+        });
+        if (obj.data) {
+          position = obj.data;
+          gotPosition = true;
+        }
+      } catch (e) {
+        console.error("All position fetching methods failed:", e);
+      }
+    }
+
+    if (!position) {
+      throw new Error(`Could not fetch position data for ID: ${positionId}`);
+    }
+
+    console.log("Position data:", position);
+
+    // Find the actual pool ID (may be different property names in different SDK versions)
     const actualPoolId =
       position.pool_id || position.poolAddress || position.poolId || poolId;
     if (!actualPoolId) {
-      throw new Error("Position doesn't have an associated pool");
+      throw new Error("Position doesn't have an associated pool ID");
     }
 
-    console.log(`Using pool ID from position data: ${actualPoolId}`);
+    console.log(`Using pool ID: ${actualPoolId}`);
 
-    // Get pool information
+    // 2. Fetch pool data
     const pool = await sdk.Pool.getPool(actualPoolId);
     if (!pool) {
-      throw new Error("Pool not found");
+      throw new Error(`Pool not found for ID: ${actualPoolId}`);
     }
 
-    // Get all rewards for this position
+    console.log("Pool data:", pool);
+
+    // 3. Fetch all rewards for this position
     console.log("Fetching rewards for position");
     let rewarderCoinTypes: string[] = [];
     try {
@@ -951,14 +1065,14 @@ export async function collectRewards(
       throw new Error("Failed to fetch rewards information");
     }
 
-    // Build collect rewards params
+    // 4. Build collect rewards params
     const collectRewardsParams = {
       coinTypeA: pool.coinTypeA,
       coinTypeB: pool.coinTypeB,
       pool_id: actualPoolId,
       pos_id: positionId,
       rewarder_coin_types: rewarderCoinTypes,
-      collect_fee: false, // Don't collect fees at the same time
+      collect_fee: true, // Also collect fees while collecting rewards
     };
 
     console.log("Collecting rewards with params:", collectRewardsParams);
