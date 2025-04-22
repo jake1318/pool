@@ -1,8 +1,14 @@
 // src/services/cetusService.ts
 
-import { initCetusSDK } from "@cetusprotocol/cetus-sui-clmm-sdk";
+import {
+  initCetusSDK,
+  ClmmPoolUtil,
+  TickMath,
+  Percentage,
+} from "@cetusprotocol/cetus-sui-clmm-sdk";
 import type { WalletContextState } from "@suiet/wallet-kit";
 import type { PoolInfo } from "./coinGeckoService";
+import BN from "bn.js";
 
 /**
  * Creates a fresh SDK instance bound to a signer address.
@@ -14,6 +20,278 @@ function getSdkWithWallet(address: string) {
   });
   sdk.senderAddress = address;
   return sdk;
+}
+
+/**
+ * Convert amount to smallest unit based on token decimals
+ * e.g., 1.5 USDC with 6 decimals becomes 1500000
+ */
+function toBaseUnit(amount: number, decimals: number): string {
+  // Handle potential floating point precision issues
+  const multiplier = Math.pow(10, decimals);
+  const baseAmount = Math.round(amount * multiplier);
+  return baseAmount.toString();
+}
+
+/**
+ * Show a transaction digest popup with link to SuiVision
+ */
+function showTransactionPopup(digest: string): void {
+  // Create a container for the popup
+  const popupContainer = document.createElement("div");
+  popupContainer.style.position = "fixed";
+  popupContainer.style.bottom = "20px";
+  popupContainer.style.right = "20px";
+  popupContainer.style.backgroundColor = "#ffffff";
+  popupContainer.style.boxShadow = "0 0 10px rgba(0,0,0,0.2)";
+  popupContainer.style.borderRadius = "8px";
+  popupContainer.style.padding = "15px";
+  popupContainer.style.zIndex = "10000";
+  popupContainer.style.maxWidth = "400px";
+  popupContainer.style.display = "flex";
+  popupContainer.style.flexDirection = "column";
+  popupContainer.style.gap = "10px";
+
+  // Create a header
+  const header = document.createElement("div");
+  header.style.display = "flex";
+  header.style.justifyContent = "space-between";
+  header.style.alignItems = "center";
+
+  const title = document.createElement("h3");
+  title.textContent = "Transaction Submitted";
+  title.style.margin = "0";
+  title.style.fontSize = "16px";
+  title.style.fontWeight = "bold";
+
+  const closeButton = document.createElement("button");
+  closeButton.textContent = "×";
+  closeButton.style.backgroundColor = "transparent";
+  closeButton.style.border = "none";
+  closeButton.style.fontSize = "20px";
+  closeButton.style.cursor = "pointer";
+  closeButton.onclick = () => document.body.removeChild(popupContainer);
+
+  header.appendChild(title);
+  header.appendChild(closeButton);
+
+  // Create content
+  const content = document.createElement("div");
+
+  const digestText = document.createElement("p");
+  digestText.textContent = `Digest: ${digest.substring(
+    0,
+    8
+  )}...${digest.substring(digest.length - 8)}`;
+  digestText.style.margin = "5px 0";
+  digestText.style.fontSize = "14px";
+
+  const link = document.createElement("a");
+  link.href = `https://suivision.xyz/txblock/${digest}`;
+  link.textContent = "View on SuiVision";
+  link.target = "_blank";
+  link.style.display = "inline-block";
+  link.style.padding = "8px 12px";
+  link.style.backgroundColor = "#3b82f6";
+  link.style.color = "white";
+  link.style.textDecoration = "none";
+  link.style.borderRadius = "4px";
+  link.style.fontSize = "14px";
+  link.style.fontWeight = "medium";
+
+  content.appendChild(digestText);
+  content.appendChild(link);
+
+  // Add header and content to popup
+  popupContainer.appendChild(header);
+  popupContainer.appendChild(content);
+
+  // Add popup to the body
+  document.body.appendChild(popupContainer);
+
+  // Auto-remove after 10 seconds
+  setTimeout(() => {
+    if (document.body.contains(popupContainer)) {
+      document.body.removeChild(popupContainer);
+    }
+  }, 10000);
+}
+
+// Common token decimals - helps us handle the most common ones
+const COMMON_DECIMALS: Record<string, number> = {
+  SUI: 9,
+  USDC: 6,
+  USDT: 6,
+  BTC: 8,
+  ETH: 8,
+  WETH: 8,
+  CETUS: 9,
+};
+
+/**
+ * Try to determine token decimals from the type string
+ */
+function guessTokenDecimals(coinType: string): number {
+  // Default fallbacks by token name
+  for (const [symbol, decimals] of Object.entries(COMMON_DECIMALS)) {
+    if (coinType.toLowerCase().includes(symbol.toLowerCase())) {
+      console.log(
+        `Guessed ${decimals} decimals for ${coinType} based on symbol ${symbol}`
+      );
+      return decimals;
+    }
+  }
+
+  // Default fallback
+  console.log(
+    `Could not determine decimals for ${coinType}, using default of 9`
+  );
+  return 9;
+}
+
+/**
+ * Get position info with compatibility for different SDK versions
+ */
+async function getPositionInfoCompat(
+  sdk: any,
+  positionId: string
+): Promise<any> {
+  console.log(`Fetching position info for: ${positionId}`);
+
+  // Try various possible method names
+  const methods = [
+    "getPosition",
+    "getPositionInfo",
+    "getNft",
+    "getPositionNft",
+  ];
+
+  for (const method of methods) {
+    if (typeof sdk.Position[method] === "function") {
+      try {
+        console.log(`Trying method ${method}`);
+        const position = await sdk.Position[method](positionId);
+        console.log(`Successfully fetched position with ${method}:`, position);
+        return position;
+      } catch (err) {
+        console.warn(`Method ${method} failed:`, err);
+      }
+    }
+  }
+
+  // If all the standard methods failed, try direct API call as last resort
+  try {
+    console.log("Attempting direct API call as fallback");
+    const posObject = await sdk.fullClient.getObject({
+      id: positionId,
+      options: { showContent: true, showDisplay: true },
+    });
+    console.log("Got position via direct API call:", posObject);
+    return posObject.data;
+  } catch (err) {
+    console.error("All position fetching methods failed:", err);
+    throw new Error(
+      `Failed to fetch position ${positionId} with all available methods`
+    );
+  }
+}
+
+/**
+ * Calculate minimum token amounts based on slippage for removing liquidity
+ */
+async function calculateMinAmountsForRemoval(
+  sdk: any,
+  pool: any,
+  position: any,
+  liquidityAmount: string,
+  slippagePercent: number
+): Promise<{ minAmountA: string; minAmountB: string }> {
+  try {
+    // Convert liquidity amount to BN
+    const liquidity = new BN(liquidityAmount);
+
+    // Get tick data
+    const lowerSqrtPrice = TickMath.tickIndexToSqrtPriceX64(
+      position.tick_lower_index
+    );
+    const upperSqrtPrice = TickMath.tickIndexToSqrtPriceX64(
+      position.tick_upper_index
+    );
+
+    // Current sqrt price
+    const curSqrtPrice = new BN(pool.current_sqrt_price);
+
+    // Calculate token amounts from liquidity
+    const coinAmounts = ClmmPoolUtil.getCoinAmountFromLiquidity(
+      liquidity,
+      curSqrtPrice,
+      lowerSqrtPrice,
+      upperSqrtPrice,
+      false
+    );
+
+    // Apply slippage
+    const slippageTolerance = new Percentage(
+      new BN(slippagePercent),
+      new BN(100)
+    );
+
+    // Adjust token amounts for slippage
+    const adjustedAmounts = ClmmPoolUtil.adjustForSlippage(
+      coinAmounts,
+      slippageTolerance,
+      false // false for removal (we want minimums)
+    );
+
+    return {
+      minAmountA: adjustedAmounts.tokenMaxA.toString(),
+      minAmountB: adjustedAmounts.tokenMaxB.toString(),
+    };
+  } catch (error) {
+    console.error("Error calculating min amounts:", error);
+
+    // Fallback: use very low minimums (0) if calculation fails
+    return {
+      minAmountA: "0",
+      minAmountB: "0",
+    };
+  }
+}
+
+/**
+ * Extract pool ID from position link or other data
+ */
+function extractPoolIdFromPosition(position: any): string {
+  // Try to extract from link field
+  if (position.link) {
+    try {
+      // Example: https://app.cetus.zone/position?chain=sui&id=0x...&pool=0x...
+      const url = new URL(position.link);
+      const poolParam = url.searchParams.get("pool");
+      if (poolParam) {
+        return poolParam;
+      }
+    } catch (e) {
+      console.warn("Failed to extract pool ID from link:", e);
+    }
+  }
+
+  // Try to extract from name field
+  if (position.name) {
+    try {
+      // Example: "Cetus LP | Pool3137-551143"
+      const poolMatch = position.name.match(/Pool(\d+)/);
+      if (poolMatch && poolMatch[1]) {
+        // Not a real pool ID, but can be used to query the actual pool
+        return `pool-${poolMatch[1]}`;
+      }
+    } catch (e) {
+      console.warn("Failed to extract pool ID from name:", e);
+    }
+  }
+
+  // Return empty string if all extraction attempts fail
+  return "";
 }
 
 /**
@@ -31,72 +309,389 @@ export async function deposit(
   const address = wallet.account.address;
   const sdk = getSdkWithWallet(address);
 
-  const tickLower = -100_000;
-  const tickUpper = 100_000;
+  // Get pool information
+  const pool = await sdk.Pool.getPool(poolId);
+  if (!pool) {
+    throw new Error("Pool not found");
+  }
 
-  // 1) open position
-  const openTx = await sdk.Position.openPositionTransactionBlock({
-    pool_id: poolId,
-    tick_lower: tickLower,
-    tick_upper: tickUpper,
-  });
-  const openRes = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: openTx,
-  });
+  // Get token decimals by looking at the coin types
+  const decimalsA = guessTokenDecimals(pool.coinTypeA);
+  const decimalsB = guessTokenDecimals(pool.coinTypeB);
 
-  // extract position id
-  const evt = openRes.events?.find(
-    (e) =>
-      e.type.endsWith("::PositionCreated") ||
-      e.type.endsWith("::PositionOpened")
+  console.log(`Token A (${pool.coinTypeA}): using ${decimalsA} decimals`);
+  console.log(`Token B (${pool.coinTypeB}): using ${decimalsB} decimals`);
+
+  // Calculate proper tick ranges based on pool's tick spacing
+  const tickSpacing = parseInt(pool.tickSpacing);
+  const currentTickIndex = parseInt(pool.current_tick_index);
+
+  // Calculate proper tick boundaries that are multiples of tickSpacing
+  // Create a position with a range that's 20 ticks on either side of the current tick
+  const lowerTickIndex =
+    Math.floor((currentTickIndex - tickSpacing * 20) / tickSpacing) *
+    tickSpacing;
+  const upperTickIndex =
+    Math.ceil((currentTickIndex + tickSpacing * 20) / tickSpacing) *
+    tickSpacing;
+
+  console.log(
+    `Creating position with tick range: ${lowerTickIndex} to ${upperTickIndex}`
   );
-  const positionId =
-    (evt?.parsedJson as any)?.position_id || (evt?.parsedJson as any)?.pos_id;
+  console.log(
+    `Pool details: tickSpacing=${tickSpacing}, currentTick=${currentTickIndex}`
+  );
+
+  // Convert amounts to base units (smallest denomination)
+  const baseAmountA = toBaseUnit(amountX, decimalsA);
+  const baseAmountB = toBaseUnit(amountY, decimalsB);
+
+  console.log(
+    `Converting amounts: ${amountX} -> ${baseAmountA}, ${amountY} -> ${baseAmountB}`
+  );
+
+  // Step 1: Create position
+  console.log("Step 1: Creating position");
+  const openPositionTx = await sdk.Position.openPositionTransactionPayload({
+    coinTypeA: pool.coinTypeA,
+    coinTypeB: pool.coinTypeB,
+    pool_id: poolId,
+    tick_lower: lowerTickIndex.toString(),
+    tick_upper: upperTickIndex.toString(),
+  });
+
+  console.log("Sending position creation transaction");
+  const openPositionRes = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: openPositionTx,
+    options: {
+      showEffects: true,
+      showEvents: true,
+      showObjectChanges: true,
+    },
+  });
+  console.log("Transaction completed, response:", openPositionRes);
+
+  // Show transaction popup for position creation
+  if (openPositionRes.digest) {
+    showTransactionPopup(openPositionRes.digest);
+  }
+
+  // If we only got a digest, try to fetch the full transaction
+  if (
+    openPositionRes.digest &&
+    (!openPositionRes.events || openPositionRes.events.length === 0)
+  ) {
+    console.log(
+      "Only received transaction digest, fetching transaction details"
+    );
+    try {
+      // Wait a moment for transaction to be fully processed
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Fetch transaction details using SDK
+      const txDetails = await sdk.fullClient.getTransactionBlock({
+        digest: openPositionRes.digest,
+        options: {
+          showEvents: true,
+          showEffects: true,
+          showObjectChanges: true,
+          showInput: true,
+        },
+      });
+
+      console.log("Fetched transaction details:", txDetails);
+
+      // Merge transaction details into our response
+      if (txDetails.events) openPositionRes.events = txDetails.events;
+      if (txDetails.effects)
+        (openPositionRes as any).effects = txDetails.effects;
+      if (txDetails.objectChanges)
+        openPositionRes.objectChanges = txDetails.objectChanges;
+
+      console.log("Updated transaction response:", openPositionRes);
+    } catch (error) {
+      console.error("Error fetching transaction details:", error);
+    }
+  }
+
+  // Extract position id with enhanced logging and error handling
+  let positionId = null;
+
+  // Look at all effects changes - specifically created objects
+  if (
+    (openPositionRes as any).effects &&
+    (openPositionRes as any).effects.created
+  ) {
+    console.log(
+      "Looking through created objects in effects:",
+      (openPositionRes as any).effects.created
+    );
+
+    // Find position NFT among created objects
+    const createdObjects = (openPositionRes as any).effects.created;
+    for (const obj of createdObjects) {
+      console.log("Checking created object:", obj);
+      if (obj.owner && obj.owner.AddressOwner === address) {
+        console.log("Found object owned by caller:", obj);
+        positionId = obj.reference.objectId;
+        console.log(`Found position ID: ${positionId}`);
+        break;
+      }
+    }
+  }
+
+  // If not found in effects, try object changes
+  if (!positionId && openPositionRes.objectChanges) {
+    console.log(
+      "Looking through object changes:",
+      openPositionRes.objectChanges
+    );
+
+    // Find objects created in this transaction
+    const createdObjects = openPositionRes.objectChanges.filter(
+      (change) => change.type === "created" || change.type === "published"
+    );
+
+    console.log("Created objects:", createdObjects);
+
+    // Find position NFT among created objects (owned by address)
+    for (const obj of createdObjects) {
+      if (obj.owner && obj.owner === address) {
+        positionId = obj.objectId;
+        console.log(`Found position ID: ${positionId}`);
+        break;
+      }
+    }
+
+    // If no owner match, use first created object as fallback
+    if (!positionId && createdObjects.length > 0) {
+      positionId = createdObjects[0].objectId;
+      console.log(`Using first created object as position ID: ${positionId}`);
+    }
+  }
+
+  // Check events as a last resort
+  if (
+    !positionId &&
+    openPositionRes.events &&
+    openPositionRes.events.length > 0
+  ) {
+    console.log("Looking through events:", openPositionRes.events);
+
+    // Try to find position events
+    const positionEventPatterns = [
+      "::PositionCreated",
+      "::PositionOpened",
+      "::position::PositionCreated",
+      "::position::PositionOpened",
+      "::clmm::position::PositionCreated",
+      "::clmm::position::PositionOpened",
+    ];
+
+    for (const pattern of positionEventPatterns) {
+      const evt = openPositionRes.events.find((e) => e.type.endsWith(pattern));
+      if (evt && evt.parsedJson) {
+        console.log(`Found event matching ${pattern}:`, evt.parsedJson);
+
+        // Try various field names for position id
+        const possibleIdFields = [
+          "position_id",
+          "pos_id",
+          "positionId",
+          "id",
+          "nft_id",
+        ];
+        for (const field of possibleIdFields) {
+          const id = (evt.parsedJson as any)[field];
+          if (id) {
+            console.log(`Found position ID in field ${field}: ${id}`);
+            positionId = id;
+            break;
+          }
+        }
+
+        if (positionId) break;
+      }
+    }
+  }
+
   if (!positionId) {
+    console.error(
+      "Transaction successful but could not extract position ID from response"
+    );
+    console.error("Full response:", JSON.stringify(openPositionRes, null, 2));
     throw new Error("Failed to extract position ID");
   }
 
-  // 2) add liquidity
-  const addLiqTx = await sdk.Position.addLiquidityTransactionBlock({
-    pos_id: positionId,
+  console.log(`Successfully extracted position ID: ${positionId}`);
+
+  // Step 2: Add liquidity to the position
+  console.log("Step 2: Adding liquidity to position");
+
+  // Wait a moment before adding liquidity to ensure position is fully created
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  // Then add liquidity using createAddLiquidityFixTokenPayload
+  // Make sure to use the same tick values as when creating the position
+  const addLiquidityParams = {
+    coinTypeA: pool.coinTypeA,
+    coinTypeB: pool.coinTypeB,
     pool_id: poolId,
-    coin_x_amount: amountX.toString(),
-    coin_y_amount: amountY.toString(),
+    tick_lower: lowerTickIndex.toString(),
+    tick_upper: upperTickIndex.toString(),
+    fix_amount_a: false, // Fix amount B instead of A
+    amount_a: baseAmountA,
+    amount_b: baseAmountB,
+    slippage: 0.05, // 5% slippage
+    is_open: false, // Already opened the position
+    rewarder_coin_types: [],
+    collect_fee: false,
+    pos_id: positionId,
+  };
+
+  console.log("Adding liquidity with params:", addLiquidityParams);
+  const addLiquidityTx = await sdk.Position.createAddLiquidityFixTokenPayload(
+    addLiquidityParams,
+    {
+      slippage: 0.05, // 5% slippage
+      curSqrtPrice: pool.current_sqrt_price,
+    }
+  );
+
+  console.log("Sending add liquidity transaction");
+  const addLiquidityRes = await wallet.signAndExecuteTransactionBlock({
+    transactionBlock: addLiquidityTx,
+    options: {
+      showEffects: true,
+      showEvents: true,
+      showInput: true,
+    },
   });
-  await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: addLiqTx,
-  });
+  console.log("Liquidity addition successful");
+
+  // Show transaction popup for liquidity addition
+  if (addLiquidityRes.digest) {
+    showTransactionPopup(addLiquidityRes.digest);
+  }
 }
 
 /**
- * Remove all liquidity from a position.
+ * Remove liquidity from a position.
+ * @param liquidityPercentage 0-100 percentage of liquidity to remove
  */
-export async function withdraw(
+export async function removeLiquidity(
   wallet: WalletContextState,
   poolId: string,
   positionId: string,
-  liquidityAmount: number
+  liquidityPercentage: number = 100
 ): Promise<void> {
   if (!wallet.connected || !wallet.account?.address) {
     throw new Error("Wallet not connected");
   }
+
   const address = wallet.account.address;
   const sdk = getSdkWithWallet(address);
 
-  const removeLiqTx = await sdk.Position.removeLiquidityTransactionBlock({
-    pos_id: positionId,
-    pool_id: poolId,
-    liquidity: liquidityAmount.toString(),
-  });
-  await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: removeLiqTx,
-  });
+  try {
+    // First try to get position info to determine the correct pool ID
+    console.log(`Fetching position information for ID: ${positionId}`);
+
+    // Use compatibility function to get position info
+    const position = await getPositionInfoCompat(sdk, positionId);
+
+    if (!position) {
+      throw new Error("Position not found");
+    }
+
+    // Use the pool ID from position data rather than the one passed in
+    // Try different property names based on SDK version
+    const actualPoolId =
+      position.pool_id || position.poolAddress || position.poolId || poolId;
+    if (!actualPoolId) {
+      throw new Error("Position doesn't have an associated pool");
+    }
+
+    console.log(`Using pool ID from position data: ${actualPoolId}`);
+
+    // Get pool information
+    const pool = await sdk.Pool.getPool(actualPoolId);
+    if (!pool) {
+      throw new Error("Pool not found");
+    }
+
+    if (!position.liquidity || position.liquidity === "0") {
+      throw new Error("Position has no liquidity");
+    }
+
+    console.log("Position details:", position);
+
+    // Calculate liquidity amount to remove (percentage of total)
+    const totalLiquidity = position.liquidity;
+    const liquidityToRemove = Math.floor(
+      Number(totalLiquidity) * (liquidityPercentage / 100)
+    ).toString();
+
+    console.log(
+      `Removing ${liquidityPercentage}% of liquidity: ${liquidityToRemove} of ${totalLiquidity}`
+    );
+
+    // Calculate minimum amounts based on slippage
+    console.log("Calculating minimum token amounts with slippage");
+    const { minAmountA, minAmountB } = await calculateMinAmountsForRemoval(
+      sdk,
+      pool,
+      position,
+      liquidityToRemove,
+      5 // 5% slippage
+    );
+
+    console.log(
+      `Minimum amounts with slippage: ${minAmountA} (token A), ${minAmountB} (token B)`
+    );
+
+    // Use the removeLiquidityTransactionPayload method
+    const removeLiquidityParams = {
+      coinTypeA: pool.coinTypeA,
+      coinTypeB: pool.coinTypeB,
+      position_id: positionId,
+      pool_id: actualPoolId,
+      delta_liquidity: liquidityToRemove,
+      min_amount_a: minAmountA,
+      min_amount_b: minAmountB,
+      collect_fee: true, // Collect fees when removing liquidity
+    };
+
+    console.log("Removing liquidity with params:", removeLiquidityParams);
+    const removeLiquidityTx =
+      await sdk.Position.removeLiquidityTransactionPayload(
+        removeLiquidityParams
+      );
+
+    console.log("Sending remove liquidity transaction");
+    const removeLiquidityRes = await wallet.signAndExecuteTransactionBlock({
+      transactionBlock: removeLiquidityTx,
+      options: {
+        showEffects: true,
+        showEvents: true,
+      },
+    });
+
+    console.log("Liquidity removal successful:", removeLiquidityRes);
+
+    // Show transaction popup
+    if (removeLiquidityRes.digest) {
+      showTransactionPopup(removeLiquidityRes.digest);
+    }
+  } catch (error) {
+    console.error("Failed to remove liquidity:", error);
+    throw new Error(`Failed to remove liquidity: ${(error as Error).message}`);
+  }
 }
 
 /**
- * Claim all accrued rewards for a position.
+ * Close position and withdraw all liquidity.
  */
-export async function claimRewards(
+export async function closePosition(
   wallet: WalletContextState,
   poolId: string,
   positionId: string
@@ -104,17 +699,289 @@ export async function claimRewards(
   if (!wallet.connected || !wallet.account?.address) {
     throw new Error("Wallet not connected");
   }
+
   const address = wallet.account.address;
   const sdk = getSdkWithWallet(address);
 
-  const collectRewardsTx = await sdk.Position.collectRewardsTransactionBlock({
-    pool_id: poolId,
-    pos_id: positionId,
-    rewarder_coin_types: [],
-  });
-  await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: collectRewardsTx,
-  });
+  try {
+    // First try to get position info to determine the correct pool ID
+    console.log(`Fetching position information for ID: ${positionId}`);
+
+    // Use compatibility function to get position info
+    const position = await getPositionInfoCompat(sdk, positionId);
+
+    if (!position) {
+      throw new Error("Position not found");
+    }
+
+    // Use the pool ID from position data rather than the one passed in
+    // Try different property names based on SDK version
+    const actualPoolId =
+      position.pool_id || position.poolAddress || position.poolId || poolId;
+    if (!actualPoolId) {
+      throw new Error("Position doesn't have an associated pool");
+    }
+
+    console.log(`Using pool ID from position data: ${actualPoolId}`);
+
+    // Get pool information
+    const pool = await sdk.Pool.getPool(actualPoolId);
+    if (!pool) {
+      throw new Error("Pool not found");
+    }
+
+    console.log("Position details:", position);
+
+    // Check if position has any liquidity
+    if (!position.liquidity || position.liquidity === "0") {
+      console.log("Position has no liquidity, proceeding with close only");
+    }
+
+    // Calculate minimum amounts based on slippage
+    console.log("Calculating minimum token amounts with slippage");
+    const { minAmountA, minAmountB } = await calculateMinAmountsForRemoval(
+      sdk,
+      pool,
+      position,
+      position.liquidity || "0",
+      5 // 5% slippage
+    );
+
+    console.log(
+      `Minimum amounts with slippage: ${minAmountA} (token A), ${minAmountB} (token B)`
+    );
+
+    // Get all rewards for this position
+    console.log("Fetching rewards for position");
+    let rewarderCoinTypes: string[] = [];
+    try {
+      const rewards = await sdk.Rewarder.posRewardersAmount(
+        actualPoolId,
+        pool.positions_handle,
+        positionId
+      );
+      rewarderCoinTypes = rewards
+        .filter((item: any) => Number(item.amount_owed) > 0)
+        .map((item: any) => item.coin_address);
+
+      console.log(
+        `Found ${rewarderCoinTypes.length} reward types:`,
+        rewarderCoinTypes
+      );
+    } catch (error) {
+      console.error("Error fetching rewards:", error);
+    }
+
+    // Build close position params
+    const closePositionParams = {
+      coinTypeA: pool.coinTypeA,
+      coinTypeB: pool.coinTypeB,
+      pool_id: actualPoolId,
+      pos_id: positionId,
+      min_amount_a: minAmountA,
+      min_amount_b: minAmountB,
+      rewarder_coin_types: rewarderCoinTypes,
+    };
+
+    console.log("Closing position with params:", closePositionParams);
+    const closePositionTx = await sdk.Position.closePositionTransactionPayload(
+      closePositionParams
+    );
+
+    console.log("Sending close position transaction");
+    const closePositionRes = await wallet.signAndExecuteTransactionBlock({
+      transactionBlock: closePositionTx,
+      options: {
+        showEffects: true,
+        showEvents: true,
+      },
+    });
+
+    console.log("Position closed successfully:", closePositionRes);
+
+    // Show transaction popup
+    if (closePositionRes.digest) {
+      showTransactionPopup(closePositionRes.digest);
+    }
+  } catch (error) {
+    console.error("Failed to close position:", error);
+    throw new Error(`Failed to close position: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Collect fees from a position.
+ */
+export async function collectFees(
+  wallet: WalletContextState,
+  poolId: string,
+  positionId: string
+): Promise<void> {
+  if (!wallet.connected || !wallet.account?.address) {
+    throw new Error("Wallet not connected");
+  }
+
+  const address = wallet.account.address;
+  const sdk = getSdkWithWallet(address);
+
+  try {
+    // First try to get position info to determine the correct pool ID
+    console.log(`Fetching position information for ID: ${positionId}`);
+
+    // Use compatibility function to get position info
+    const position = await getPositionInfoCompat(sdk, positionId);
+
+    if (!position) {
+      throw new Error("Position not found");
+    }
+
+    // Use the pool ID from position data rather than the one passed in
+    // Try different property names based on SDK version
+    const actualPoolId =
+      position.pool_id || position.poolAddress || position.poolId || poolId;
+    if (!actualPoolId) {
+      throw new Error("Position doesn't have an associated pool");
+    }
+
+    console.log(`Using pool ID from position data: ${actualPoolId}`);
+
+    // Get pool information
+    const pool = await sdk.Pool.getPool(actualPoolId);
+    if (!pool) {
+      throw new Error("Pool not found");
+    }
+
+    // Build collect fees params
+    const collectFeesParams = {
+      coinTypeA: pool.coinTypeA,
+      coinTypeB: pool.coinTypeB,
+      pool_id: actualPoolId,
+      pos_id: positionId,
+    };
+
+    console.log("Collecting fees with params:", collectFeesParams);
+    const collectFeesTx = await sdk.Position.collectFeeTransactionPayload(
+      collectFeesParams,
+      true // Wait for confirmation
+    );
+
+    console.log("Sending collect fees transaction");
+    const collectFeesRes = await wallet.signAndExecuteTransactionBlock({
+      transactionBlock: collectFeesTx,
+    });
+
+    console.log("Fees collected successfully:", collectFeesRes);
+
+    // Show transaction popup
+    if (collectFeesRes.digest) {
+      showTransactionPopup(collectFeesRes.digest);
+    }
+  } catch (error) {
+    console.error("Failed to collect fees:", error);
+    throw new Error(`Failed to collect fees: ${(error as Error).message}`);
+  }
+}
+
+/**
+ * Collect rewards from a position.
+ */
+export async function collectRewards(
+  wallet: WalletContextState,
+  poolId: string,
+  positionId: string
+): Promise<void> {
+  if (!wallet.connected || !wallet.account?.address) {
+    throw new Error("Wallet not connected");
+  }
+
+  const address = wallet.account.address;
+  const sdk = getSdkWithWallet(address);
+
+  try {
+    // First try to get position info to determine the correct pool ID
+    console.log(`Fetching position information for ID: ${positionId}`);
+
+    // Use compatibility function to get position info
+    const position = await getPositionInfoCompat(sdk, positionId);
+
+    if (!position) {
+      throw new Error("Position not found");
+    }
+
+    // Use the pool ID from position data rather than the one passed in
+    // Try different property names based on SDK version
+    const actualPoolId =
+      position.pool_id || position.poolAddress || position.poolId || poolId;
+    if (!actualPoolId) {
+      throw new Error("Position doesn't have an associated pool");
+    }
+
+    console.log(`Using pool ID from position data: ${actualPoolId}`);
+
+    // Get pool information
+    const pool = await sdk.Pool.getPool(actualPoolId);
+    if (!pool) {
+      throw new Error("Pool not found");
+    }
+
+    // Get all rewards for this position
+    console.log("Fetching rewards for position");
+    let rewarderCoinTypes: string[] = [];
+    try {
+      const rewards = await sdk.Rewarder.posRewardersAmount(
+        actualPoolId,
+        pool.positions_handle,
+        positionId
+      );
+      rewarderCoinTypes = rewards
+        .filter((item: any) => Number(item.amount_owed) > 0)
+        .map((item: any) => item.coin_address);
+
+      console.log(
+        `Found ${rewarderCoinTypes.length} reward types:`,
+        rewarderCoinTypes
+      );
+
+      if (rewarderCoinTypes.length === 0) {
+        console.log("No rewards to collect");
+        return;
+      }
+    } catch (error) {
+      console.error("Error fetching rewards:", error);
+      throw new Error("Failed to fetch rewards information");
+    }
+
+    // Build collect rewards params
+    const collectRewardsParams = {
+      coinTypeA: pool.coinTypeA,
+      coinTypeB: pool.coinTypeB,
+      pool_id: actualPoolId,
+      pos_id: positionId,
+      rewarder_coin_types: rewarderCoinTypes,
+      collect_fee: false, // Don't collect fees at the same time
+    };
+
+    console.log("Collecting rewards with params:", collectRewardsParams);
+    const collectRewardsTx =
+      await sdk.Rewarder.collectRewarderTransactionPayload(
+        collectRewardsParams
+      );
+
+    console.log("Sending collect rewards transaction");
+    const collectRewardsRes = await wallet.signAndExecuteTransactionBlock({
+      transactionBlock: collectRewardsTx,
+    });
+
+    console.log("Rewards collected successfully:", collectRewardsRes);
+
+    // Show transaction popup
+    if (collectRewardsRes.digest) {
+      showTransactionPopup(collectRewardsRes.digest);
+    }
+  } catch (error) {
+    console.error("Failed to collect rewards:", error);
+    throw new Error(`Failed to collect rewards: ${(error as Error).message}`);
+  }
 }
 
 /**
@@ -124,12 +991,42 @@ export async function getPositions(
   ownerAddress: string
 ): Promise<Array<{ id: string; poolAddress: string; liquidity: number }>> {
   const sdk = initCetusSDK({ network: "mainnet" });
-  const raw = await sdk.Position.getPositionList(ownerAddress);
-  return raw.map((p) => ({
-    id: p.id,
-    poolAddress: p.pool_id,
-    liquidity: Number(p.liquidity) || 0,
-  }));
+  try {
+    const raw = await sdk.Position.getPositionList(ownerAddress);
+    console.log("Raw positions data:", raw);
+
+    // Process each position
+    const positions = [];
+
+    for (const p of raw) {
+      // Get id from various possible fields
+      const id = p.id || p.pos_object_id || p.position_id || p.nft_id || "";
+      if (!id) continue; // Skip if no ID found
+
+      // Try to extract the pool id
+      let poolAddress = p.pool_id || p.poolAddress || p.poolId || "";
+
+      // If poolAddress is still empty, try to extract it from other fields
+      if (!poolAddress) {
+        poolAddress = extractPoolIdFromPosition(p);
+      }
+
+      // Return the position object with extracted data
+      positions.push({
+        id,
+        poolAddress,
+        liquidity: Number(p.liquidity) || 0,
+      });
+    }
+
+    console.log("Processed positions:", positions);
+    return positions;
+  } catch (error) {
+    console.error("Error fetching positions:", error);
+
+    // Return empty array instead of throwing to allow UI to handle gracefully
+    return [];
+  }
 }
 
 /**
@@ -138,6 +1035,19 @@ export async function getPositions(
 export async function getPoolsDetailsForPositions(
   addresses: string[]
 ): Promise<PoolInfo[]> {
-  const { getPoolsByAddresses } = await import("./coinGeckoService");
-  return getPoolsByAddresses(addresses);
+  try {
+    // Filter out any "unknown" pool addresses
+    const validAddresses = addresses.filter((addr) => addr !== "unknown");
+
+    if (validAddresses.length === 0) {
+      return [];
+    }
+
+    const { getPoolsByAddresses } = await import("./coinGeckoService");
+    return await getPoolsByAddresses(validAddresses);
+  } catch (error) {
+    console.error("Error in getPoolsDetailsForPositions:", error);
+    // Return an empty array instead of throwing, so UI can handle gracefully
+    return [];
+  }
 }
