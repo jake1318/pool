@@ -22,9 +22,6 @@ interface RewardsModalState {
   totalRewards: blockVisionService.RewardInfo[];
 }
 
-// Default placeholder image for tokens without logos
-const DEFAULT_TOKEN_LOGO = "https://via.placeholder.com/40?text=?";
-
 function TokenLogo({
   logoUrl,
   symbol,
@@ -34,35 +31,36 @@ function TokenLogo({
   symbol: string;
   size?: "sm" | "md" | "lg";
 }) {
-  // Define strict pixel dimensions based on size
-  const dimensions = size === "sm" ? 20 : size === "lg" ? 32 : 24;
+  const sizeClass =
+    size === "sm"
+      ? "token-logo-sm"
+      : size === "lg"
+      ? "token-logo-lg"
+      : "token-logo";
 
   return (
     <div
-      className="rounded-full bg-gray-800 overflow-hidden flex items-center justify-center"
-      style={{
-        width: `${dimensions}px`,
-        height: `${dimensions}px`,
-        minWidth: `${dimensions}px`,
-        minHeight: `${dimensions}px`,
-        maxWidth: `${dimensions}px`,
-        maxHeight: `${dimensions}px`,
-      }}
+      className={`${sizeClass} rounded-full overflow-hidden bg-gray-800 flex items-center justify-center`}
     >
-      <img
-        src={logoUrl || DEFAULT_TOKEN_LOGO}
-        alt={`${symbol} Logo`}
-        style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-        }}
-        onError={(e) => {
-          // If loading the image fails, use the default
-          e.currentTarget.onerror = null;
-          e.currentTarget.src = DEFAULT_TOKEN_LOGO;
-        }}
-      />
+      {logoUrl ? (
+        <img
+          src={logoUrl}
+          alt={`${symbol} Logo`}
+          className="w-full h-full object-contain"
+          onError={(e) => {
+            // If loading the image fails, show the first letter of the symbol
+            e.currentTarget.style.display = "none";
+            const parent = e.currentTarget.parentNode as HTMLElement;
+            parent.innerHTML = `<span class="text-white font-bold">${
+              symbol ? symbol.charAt(0) : "?"
+            }</span>`;
+          }}
+        />
+      ) : (
+        <span className="text-white font-bold">
+          {symbol ? symbol.charAt(0) : "?"}
+        </span>
+      )}
     </div>
   );
 }
@@ -80,8 +78,8 @@ function PoolPair({
 }) {
   return (
     <div className="flex items-center">
-      <div className="flex mr-2" style={{ marginRight: "10px" }}>
-        <div className="z-10" style={{ marginRight: "-8px" }}>
+      <div className="flex -space-x-2 mr-2">
+        <div className="z-10">
           <TokenLogo logoUrl={tokenALogo} symbol={tokenASymbol} />
         </div>
         <div>

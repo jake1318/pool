@@ -1,3 +1,8 @@
+/* ------------------------------------------------------------------
+ *  src/components/PoolTable.tsx
+ *  Renders the Liquidity Pools table with uniform token logos
+ * ----------------------------------------------------------------- */
+
 import React from "react";
 import { PoolInfo } from "../services/coinGeckoService";
 import { formatDollars, formatPercentage } from "../utils/formatters";
@@ -13,6 +18,14 @@ interface PoolTableProps {
   onDeposit: (pool: PoolInfo) => void;
 }
 
+/** Returns a coloured-text CSS class depending on APR */
+const aprColour = (apr: number): string => {
+  if (apr >= 100) return "text-green-400";
+  if (apr >= 50) return "text-green-500";
+  if (apr >= 20) return "text-green-600";
+  return "";
+};
+
 const PoolTable: React.FC<PoolTableProps> = ({
   pools,
   sortColumn,
@@ -20,59 +33,42 @@ const PoolTable: React.FC<PoolTableProps> = ({
   onSort,
   onDeposit,
 }) => {
+  /** header cell builder */
+  const header = (
+    label: string,
+    col: PoolTableProps["sortColumn"],
+    className = ""
+  ) => (
+    <th
+      className={`py-3 px-4 cursor-pointer hover:bg-gray-800 text-left ${className} ${
+        sortColumn === col ? "bg-gray-800" : ""
+      }`}
+      onClick={() => onSort(col)}
+    >
+      {label}{" "}
+      {sortColumn === col && (
+        <span className="inline-block ml-0.5">
+          {sortOrder === "asc" ? "↑" : "↓"}
+        </span>
+      )}
+    </th>
+  );
+
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full">
         <thead>
           <tr className="border-b border-gray-700">
             <th className="text-left py-3 px-4">Pool</th>
-            <th
-              className={`text-left py-3 px-4 cursor-pointer hover:bg-gray-800 ${
-                sortColumn === "dex" ? "bg-gray-800" : ""
-              }`}
-              onClick={() => onSort("dex")}
-            >
-              DEX {sortColumn === "dex" && (sortOrder === "asc" ? "↑" : "↓")}
-            </th>
-            <th
-              className={`text-right py-3 px-4 cursor-pointer hover:bg-gray-800 ${
-                sortColumn === "liquidityUSD" ? "bg-gray-800" : ""
-              }`}
-              onClick={() => onSort("liquidityUSD")}
-            >
-              Liquidity{" "}
-              {sortColumn === "liquidityUSD" &&
-                (sortOrder === "asc" ? "↑" : "↓")}
-            </th>
-            <th
-              className={`text-right py-3 px-4 cursor-pointer hover:bg-gray-800 ${
-                sortColumn === "volumeUSD" ? "bg-gray-800" : ""
-              }`}
-              onClick={() => onSort("volumeUSD")}
-            >
-              Volume (24h){" "}
-              {sortColumn === "volumeUSD" && (sortOrder === "asc" ? "↑" : "↓")}
-            </th>
-            <th
-              className={`text-right py-3 px-4 cursor-pointer hover:bg-gray-800 ${
-                sortColumn === "feesUSD" ? "bg-gray-800" : ""
-              }`}
-              onClick={() => onSort("feesUSD")}
-            >
-              Fees (24h){" "}
-              {sortColumn === "feesUSD" && (sortOrder === "asc" ? "↑" : "↓")}
-            </th>
-            <th
-              className={`text-right py-3 px-4 cursor-pointer hover:bg-gray-800 ${
-                sortColumn === "apr" ? "bg-gray-800" : ""
-              }`}
-              onClick={() => onSort("apr")}
-            >
-              APR {sortColumn === "apr" && (sortOrder === "asc" ? "↑" : "↓")}
-            </th>
+            {header("DEX", "dex")}
+            {header("Liquidity", "liquidityUSD", "text-right")}
+            {header("Volume (24h)", "volumeUSD", "text-right")}
+            {header("Fees (24h)", "feesUSD", "text-right")}
+            {header("APR", "apr", "text-right")}
             <th className="text-right py-3 px-4">Action</th>
           </tr>
         </thead>
+
         <tbody>
           {pools.length === 0 ? (
             <tr>
@@ -86,29 +82,56 @@ const PoolTable: React.FC<PoolTableProps> = ({
                 key={pool.address}
                 className="border-b border-gray-800 hover:bg-gray-800"
               >
+                {/* -------- Pool column (logos + pair name + fee tier) -------- */}
                 <td className="py-4 px-4">
-                  <PoolPair
-                    tokenALogo={pool.tokenAMetadata?.logo_uri}
-                    tokenBLogo={pool.tokenBMetadata?.logo_uri}
-                    tokenASymbol={pool.tokenA}
-                    tokenBSymbol={pool.tokenB}
-                  />
+                  <div className="flex items-center gap-3">
+                    {/* Token pair logos */}
+                    <div className="flex -space-x-2">
+                      <TokenLogo
+                        logoUrl={pool.tokenAMetadata?.logo_uri}
+                        symbol={pool.tokenA}
+                      />
+                      <TokenLogo
+                        logoUrl={pool.tokenBMetadata?.logo_uri}
+                        symbol={pool.tokenB}
+                      />
+                    </div>
+
+                    {/* Pair name & fee */}
+                    <div className="flex flex-col">
+                      <span className="font-medium whitespace-nowrap">
+                        {pool.tokenA} / {pool.tokenB}
+                      </span>
+
+                      {/* Fee badge if present */}
+                      {pool.name && pool.name.match(/(\d+(\.\d+)?)%/) && (
+                        <span className="fee-tier inline-block mt-0.5">
+                          {pool.name.match(/(\d+(\.\d+)?)%/)![0]}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </td>
+
+                {/* -------- DEX column (name + reward icons) -------- */}
                 <td className="py-4 px-4">
-                  <div className="font-medium">{pool.dex}</div>
+                  <div className="font-medium capitalize">{pool.dex}</div>
+                  {/* Reward token badges */}
                   {pool.rewardSymbols.length > 0 && (
                     <div className="mt-1 flex flex-wrap gap-1">
-                      {pool.rewardSymbols.map((symbol, idx) => (
+                      {pool.rewardSymbols.map((sym) => (
                         <span
-                          key={idx}
+                          key={sym}
                           className="px-2 py-0.5 bg-green-900 text-green-300 rounded-full text-xs"
                         >
-                          {symbol}
+                          {sym}
                         </span>
                       ))}
                     </div>
                   )}
                 </td>
+
+                {/* -------- Numbers -------- */}
                 <td className="text-right py-4 px-4">
                   {formatDollars(pool.liquidityUSD)}
                 </td>
@@ -119,20 +142,12 @@ const PoolTable: React.FC<PoolTableProps> = ({
                   {formatDollars(pool.feesUSD)}
                 </td>
                 <td className="text-right py-4 px-4">
-                  <span
-                    className={
-                      pool.apr > 100
-                        ? "text-green-400"
-                        : pool.apr > 50
-                        ? "text-green-500"
-                        : pool.apr > 20
-                        ? "text-green-600"
-                        : ""
-                    }
-                  >
+                  <span className={aprColour(pool.apr)}>
                     {formatPercentage(pool.apr)}
                   </span>
                 </td>
+
+                {/* -------- Action -------- */}
                 <td className="text-right py-4 px-4">
                   <button
                     className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
