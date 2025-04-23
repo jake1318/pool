@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from "react";
-import type { PoolInfo } from "../services/coinGeckoService";
+import React, { useState } from "react";
+import { PoolInfo } from "../services/coinGeckoService";
+import { TokenLogo } from "./TokenLogo";
 
 interface DepositModalProps {
   pool: PoolInfo;
@@ -12,65 +13,85 @@ const DepositModal: React.FC<DepositModalProps> = ({
   onConfirm,
   onClose,
 }) => {
-  const [amountA, setAmountA] = useState("");
-  const [amountB, setAmountB] = useState("");
+  const [amountA, setAmountA] = useState<string>("");
+  const [amountB, setAmountB] = useState<string>("");
 
-  // Try to pull symbolA / symbolB out of pool.name (e.g. "USDC / SUI 0.25%" → ["USDC","SUI"])
-  const [symbolA, symbolB] = useMemo(() => {
-    const slashIdx = pool.name.indexOf("/");
-    if (slashIdx !== -1) {
-      const left = pool.name.slice(0, slashIdx).trim();
-      const right = pool.name
-        .slice(slashIdx + 1)
-        .trim()
-        .split(" ")[0]; // drop the fee part after the token
-      return [left, right];
-    }
-    return ["TokenA", "TokenB"];
-  }, [pool.name]);
-
-  const handleSubmit = () => {
-    const a = parseFloat(amountA);
-    const b = parseFloat(amountB);
-    if (isNaN(a) || isNaN(b)) {
-      alert("Please enter valid numeric amounts for both tokens.");
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const numA = parseFloat(amountA);
+    const numB = parseFloat(amountB);
+    if (isNaN(numA) || isNaN(numB) || numA <= 0 || numB <= 0) {
+      alert("Please enter valid amounts for both tokens.");
       return;
     }
-    onConfirm(a, b);
+    onConfirm(numA, numB);
   };
 
   return (
-    <div className="modal-overlay">
-      <div className="modal">
-        <h2>Deposit into {pool.name}</h2>
-        <div className="modal-inputs">
-          <div className="input-group">
-            <label>Amount {symbolA}</label>
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-auto bg-black bg-opacity-75">
+      <div className="w-full max-w-md bg-gray-900 rounded-lg shadow-lg p-6 m-4">
+        <h3 className="text-lg font-medium text-white mb-4">
+          Deposit Liquidity
+        </h3>
+        <form onSubmit={handleSubmit}>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              <div className="flex items-center">
+                <TokenLogo
+                  logoUrl={pool.tokenAMetadata?.logo_uri}
+                  symbol={pool.tokenA}
+                  size="sm"
+                />
+                <span className="ml-2">{pool.tokenA} Amount</span>
+              </div>
+            </label>
             <input
               type="number"
-              placeholder={`e.g. 100.0`}
+              step="any"
+              className="w-full px-3 py-2 bg-gray-800 text-white rounded border border-gray-700 focus:outline-none focus:border-blue-500"
               value={amountA}
               onChange={(e) => setAmountA(e.target.value)}
+              placeholder={`Enter ${pool.tokenA} amount`}
+              required
             />
           </div>
-          <div className="input-group">
-            <label>Amount {symbolB}</label>
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              <div className="flex items-center">
+                <TokenLogo
+                  logoUrl={pool.tokenBMetadata?.logo_uri}
+                  symbol={pool.tokenB}
+                  size="sm"
+                />
+                <span className="ml-2">{pool.tokenB} Amount</span>
+              </div>
+            </label>
             <input
               type="number"
-              placeholder={`e.g. 50.0`}
+              step="any"
+              className="w-full px-3 py-2 bg-gray-800 text-white rounded border border-gray-700 focus:outline-none focus:border-blue-500"
               value={amountB}
               onChange={(e) => setAmountB(e.target.value)}
+              placeholder={`Enter ${pool.tokenB} amount`}
+              required
             />
           </div>
-        </div>
-        <div className="modal-actions">
-          <button className="btn-cancel" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn-confirm" onClick={handleSubmit}>
-            Deposit
-          </button>
-        </div>
+          <div className="mt-6 flex justify-end gap-3">
+            <button
+              type="button"
+              className="inline-flex justify-center px-4 py-2 text-sm font-medium text-gray-300 bg-gray-700 border border-gray-600 rounded hover:bg-gray-600"
+              onClick={onClose}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="inline-flex justify-center px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded hover:bg-blue-700"
+            >
+              Deposit
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

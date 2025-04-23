@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "react";
-import { formatLargeNumber } from "../utils/formatters";
+import { formatLargeNumber, formatDollars } from "../utils/formatters";
 
 interface WithdrawModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: () => void;
   liquidity: number;
+  valueUsd: number;
 }
 
 function WithdrawModal({
@@ -13,6 +14,7 @@ function WithdrawModal({
   onClose,
   onConfirm,
   liquidity,
+  valueUsd,
 }: WithdrawModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -74,6 +76,13 @@ function WithdrawModal({
             </p>
 
             <div className="bg-gray-800 rounded-lg p-4 mb-4">
+              <div className="flex justify-between mb-3">
+                <span className="text-gray-400">Total Value:</span>
+                <span className="font-medium text-lg">
+                  {formatDollars(valueUsd)}
+                </span>
+              </div>
+
               <div className="flex justify-between mb-2">
                 <span className="text-gray-400">Total Liquidity:</span>
                 <span className="font-medium">

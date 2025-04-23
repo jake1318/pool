@@ -1,31 +1,17 @@
 import React from "react";
-import type { PoolInfo } from "../services/coinGeckoService";
-import { formatUSD, formatPercent } from "../utils/format";
+import { PoolInfo } from "../services/coinGeckoService";
+import { formatDollars, formatPercentage } from "../utils/formatters";
+import { TokenLogo, PoolPair } from "./TokenLogo";
 
 interface PoolTableProps {
   pools: PoolInfo[];
   sortColumn: "dex" | "liquidityUSD" | "volumeUSD" | "feesUSD" | "apr";
   sortOrder: "asc" | "desc";
-  onSort: (column: PoolTableProps["sortColumn"]) => void;
+  onSort: (
+    column: "dex" | "liquidityUSD" | "volumeUSD" | "feesUSD" | "apr"
+  ) => void;
   onDeposit: (pool: PoolInfo) => void;
 }
-
-/**
- * Compute APR as a decimal ratio:
- *  • If API gave you pool.apr (as a decimal, e.g. 0.20 for 20%), use that
- *  • Otherwise approximate from 24 h fees / TVL:
- *      daily_fee_usd / liquidity_usd × 365
- */
-const computeApr = (pool: PoolInfo): number => {
-  // assume pool.apr from CoinGecko is a decimal already (0.20 → 20%)
-  if (typeof pool.apr === "number" && pool.apr > 0) {
-    return pool.apr;
-  }
-  if (pool.liquidityUSD > 0) {
-    return (pool.feesUSD / pool.liquidityUSD) * 365;
-  }
-  return 0;
-};
 
 const PoolTable: React.FC<PoolTableProps> = ({
   pools,
@@ -34,55 +20,133 @@ const PoolTable: React.FC<PoolTableProps> = ({
   onSort,
   onDeposit,
 }) => {
-  const headerCell = (label: string, colKey: PoolTableProps["sortColumn"]) => (
-    <th
-      className="sortable"
-      style={{ cursor: "pointer" }}
-      onClick={() => onSort(colKey)}
-    >
-      {label}
-      {sortColumn === colKey && (
-        <span className="sort-indicator">
-          {sortOrder === "asc" ? "▲" : "▼"}
-        </span>
-      )}
-    </th>
-  );
-
   return (
-    <table className="pool-table">
-      <thead>
-        <tr>
-          <th>Pool</th>
-          {headerCell("DEX", "dex")}
-          {headerCell("Liquidity", "liquidityUSD")}
-          {headerCell("Volume (24H)", "volumeUSD")}
-          {headerCell("Fees (24H)", "feesUSD")}
-          {headerCell("APR", "apr")}
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        {pools.map((pool) => {
-          const aprRatio = computeApr(pool);
-          return (
-            <tr key={pool.address}>
-              <td>{pool.name}</td>
-              <td>{pool.dex.toUpperCase()}</td>
-              <td>{formatUSD(pool.liquidityUSD)}</td>
-              <td>{formatUSD(pool.volumeUSD)}</td>
-              <td>{formatUSD(pool.feesUSD)}</td>
-              <td>{formatPercent(aprRatio)}</td>
-              <td>
-                <button className="btn-deposit" onClick={() => onDeposit(pool)}>
-                  Deposit
-                </button>
+    <div className="overflow-x-auto">
+      <table className="min-w-full">
+        <thead>
+          <tr className="border-b border-gray-700">
+            <th className="text-left py-3 px-4">Pool</th>
+            <th
+              className={`text-left py-3 px-4 cursor-pointer hover:bg-gray-800 ${
+                sortColumn === "dex" ? "bg-gray-800" : ""
+              }`}
+              onClick={() => onSort("dex")}
+            >
+              DEX {sortColumn === "dex" && (sortOrder === "asc" ? "↑" : "↓")}
+            </th>
+            <th
+              className={`text-right py-3 px-4 cursor-pointer hover:bg-gray-800 ${
+                sortColumn === "liquidityUSD" ? "bg-gray-800" : ""
+              }`}
+              onClick={() => onSort("liquidityUSD")}
+            >
+              Liquidity{" "}
+              {sortColumn === "liquidityUSD" &&
+                (sortOrder === "asc" ? "↑" : "↓")}
+            </th>
+            <th
+              className={`text-right py-3 px-4 cursor-pointer hover:bg-gray-800 ${
+                sortColumn === "volumeUSD" ? "bg-gray-800" : ""
+              }`}
+              onClick={() => onSort("volumeUSD")}
+            >
+              Volume (24h){" "}
+              {sortColumn === "volumeUSD" && (sortOrder === "asc" ? "↑" : "↓")}
+            </th>
+            <th
+              className={`text-right py-3 px-4 cursor-pointer hover:bg-gray-800 ${
+                sortColumn === "feesUSD" ? "bg-gray-800" : ""
+              }`}
+              onClick={() => onSort("feesUSD")}
+            >
+              Fees (24h){" "}
+              {sortColumn === "feesUSD" && (sortOrder === "asc" ? "↑" : "↓")}
+            </th>
+            <th
+              className={`text-right py-3 px-4 cursor-pointer hover:bg-gray-800 ${
+                sortColumn === "apr" ? "bg-gray-800" : ""
+              }`}
+              onClick={() => onSort("apr")}
+            >
+              APR {sortColumn === "apr" && (sortOrder === "asc" ? "↑" : "↓")}
+            </th>
+            <th className="text-right py-3 px-4">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pools.length === 0 ? (
+            <tr>
+              <td colSpan={7} className="py-4 text-center text-gray-500">
+                No pools found
               </td>
             </tr>
-          );
-        })}
-      </tbody>
-    </table>
+          ) : (
+            pools.map((pool) => (
+              <tr
+                key={pool.address}
+                className="border-b border-gray-800 hover:bg-gray-800"
+              >
+                <td className="py-4 px-4">
+                  <PoolPair
+                    tokenALogo={pool.tokenAMetadata?.logo_uri}
+                    tokenBLogo={pool.tokenBMetadata?.logo_uri}
+                    tokenASymbol={pool.tokenA}
+                    tokenBSymbol={pool.tokenB}
+                  />
+                </td>
+                <td className="py-4 px-4">
+                  <div className="font-medium">{pool.dex}</div>
+                  {pool.rewardSymbols.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {pool.rewardSymbols.map((symbol, idx) => (
+                        <span
+                          key={idx}
+                          className="px-2 py-0.5 bg-green-900 text-green-300 rounded-full text-xs"
+                        >
+                          {symbol}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </td>
+                <td className="text-right py-4 px-4">
+                  {formatDollars(pool.liquidityUSD)}
+                </td>
+                <td className="text-right py-4 px-4">
+                  {formatDollars(pool.volumeUSD)}
+                </td>
+                <td className="text-right py-4 px-4">
+                  {formatDollars(pool.feesUSD)}
+                </td>
+                <td className="text-right py-4 px-4">
+                  <span
+                    className={
+                      pool.apr > 100
+                        ? "text-green-400"
+                        : pool.apr > 50
+                        ? "text-green-500"
+                        : pool.apr > 20
+                        ? "text-green-600"
+                        : ""
+                    }
+                  >
+                    {formatPercentage(pool.apr)}
+                  </span>
+                </td>
+                <td className="text-right py-4 px-4">
+                  <button
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                    onClick={() => onDeposit(pool)}
+                  >
+                    Deposit
+                  </button>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 };
 
