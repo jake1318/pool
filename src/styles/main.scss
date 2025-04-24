@@ -1,71 +1,392 @@
-@import "./variables.scss";
+/* Base styles */
+:root {
+  --bg-color: #000000;
+  --text-color: #ffffff;
+  --secondary-text: #a0a3b1;
+  --border-color: #333333;
+  --accent-color: #3773f5;
+  --hover-color: #181818;
+}
 
-// Base styles
-html,
 body {
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
-    "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
+    "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
     sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: var(--color-bg-primary);
-  color: var(--color-text-primary);
   margin: 0;
   padding: 0;
 }
 
-button,
-input,
-select,
-textarea {
-  font-family: inherit;
+.app {
+  width: 100%;
+  min-height: 100vh;
 }
 
-button {
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.app-title {
+  margin: 0;
+  font-size: 1.75rem;
+}
+
+main {
+  padding: 1rem;
+}
+
+/* Search Bar */
+.search-bar {
+  position: relative;
+  margin-bottom: 1rem;
+
+  input {
+    width: 100%;
+    padding: 0.5rem 1rem;
+    background-color: #222;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-color);
+    font-size: 14px;
+
+    &:focus {
+      outline: none;
+      border-color: var(--accent-color);
+    }
+  }
+
+  .search-button {
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--secondary-text);
+    cursor: pointer;
+  }
+}
+
+/* Pools Table */
+.pools-table-container {
+  width: 100%;
+  overflow-x: auto;
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+
+    th {
+      text-align: left;
+      padding: 1rem;
+      color: var(--secondary-text);
+      border-bottom: 1px solid var(--border-color);
+      cursor: pointer;
+
+      &:hover {
+        color: var(--text-color);
+      }
+    }
+
+    td {
+      padding: 1rem;
+      border-bottom: 1px solid var(--border-color);
+
+      &.high-apr {
+        color: #00ff00;
+      }
+    }
+
+    tr:hover {
+      background-color: var(--hover-color);
+    }
+  }
+}
+
+/* Pool Pair */
+.pool-pair {
+  display: flex;
+  align-items: center;
+
+  .token-icons {
+    display: flex;
+    margin-right: 0.75rem;
+
+    img {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background-color: #333;
+
+      &:last-child {
+        margin-left: -8px;
+      }
+    }
+  }
+
+  .pair-name {
+    font-weight: bold;
+  }
+
+  .fee-percentage {
+    font-size: 0.875rem;
+    color: var(--secondary-text);
+    margin-left: 0.5rem;
+  }
+}
+
+/* DEX Dropdown */
+.dex-dropdown {
+  select {
+    padding: 0.5rem;
+    background-color: #222;
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    border-radius: 4px;
+
+    option {
+      background-color: #222;
+    }
+
+    &:focus {
+      outline: none;
+      border-color: var(--accent-color);
+    }
+  }
+}
+
+/* Action Button */
+.deposit-button {
+  padding: 0.5rem 1rem;
+  background-color: #222;
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  border-radius: 4px;
   cursor: pointer;
-  border: none;
+
+  &:hover {
+    background-color: var(--accent-color);
+    color: #fff;
+  }
 }
 
-// Import component styles - make sure to check the file paths!
-@import "./components/TokenLogo.scss";
-@import "./components/SearchBar.scss";
-@import "./components/PoolTable.scss";
-@import "./components/Modals.scss";
-@import "./components/TransactionNotification.scss";
+/* Modal Styling */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.85);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
 
-// Import page styles
-@import "./pages/Pools.scss";
-@import "./pages/Positions.scss";
+.modal {
+  background-color: #111;
+  border-radius: 8px;
+  padding: 1.5rem;
+  width: 100%;
+  max-width: 450px;
 
-// Utility classes
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+
+    .modal-title {
+      font-size: 1.25rem;
+      font-weight: bold;
+      margin: 0;
+    }
+
+    .close-button {
+      background: none;
+      border: none;
+      color: var(--secondary-text);
+      font-size: 1.5rem;
+      cursor: pointer;
+
+      &:hover {
+        color: var(--text-color);
+      }
+    }
+  }
+
+  .input-group {
+    margin-bottom: 1rem;
+
+    label {
+      display: block;
+      margin-bottom: 0.5rem;
+      color: var(--secondary-text);
+    }
+
+    input {
+      width: 100%;
+      padding: 0.75rem;
+      background-color: #222;
+      border: 1px solid var(--border-color);
+      color: var(--text-color);
+      border-radius: 4px;
+
+      &:focus {
+        outline: none;
+        border-color: var(--accent-color);
+      }
+    }
+
+    .balance {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 0.5rem;
+      font-size: 0.875rem;
+      color: var(--secondary-text);
+
+      .max-button {
+        background: none;
+        border: none;
+        color: var(--accent-color);
+        cursor: pointer;
+        padding: 0;
+        font-size: 0.875rem;
+
+        &:hover {
+          text-decoration: underline;
+        }
+      }
+    }
+  }
+
+  .button-group {
+    display: flex;
+    justify-content: flex-end;
+    gap: 1rem;
+    margin-top: 1.5rem;
+
+    button {
+      padding: 0.75rem 1.5rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+
+      &.confirm {
+        background-color: var(--accent-color);
+        color: #fff;
+        border: none;
+
+        &:hover {
+          opacity: 0.9;
+        }
+      }
+
+      &.cancel {
+        background: none;
+        border: 1px solid var(--border-color);
+        color: var(--text-color);
+
+        &:hover {
+          background-color: rgba(255, 255, 255, 0.1);
+        }
+      }
+    }
+  }
+}
+
+/* Notification */
+.transaction-notification {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  background-color: #111;
+  border-radius: 8px;
+  padding: 1rem;
+  width: 300px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+
+  .notification-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.5rem;
+
+    .status {
+      display: flex;
+      align-items: center;
+
+      .status-icon {
+        margin-right: 0.5rem;
+
+        &.success {
+          color: #00c853;
+        }
+
+        &.error {
+          color: #ff3d00;
+        }
+      }
+    }
+
+    .close-button {
+      background: none;
+      border: none;
+      color: var(--secondary-text);
+      cursor: pointer;
+      padding: 0;
+      font-size: 1rem;
+
+      &:hover {
+        color: var(--text-color);
+      }
+    }
+  }
+
+  .notification-content {
+    margin-bottom: 0.75rem;
+    color: var(--secondary-text);
+  }
+
+  .notification-actions {
+    a {
+      color: var(--accent-color);
+      text-decoration: none;
+      font-size: 0.875rem;
+      display: inline-flex;
+      align-items: center;
+
+      svg {
+        margin-right: 0.25rem;
+      }
+
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+  }
+}
+
+/* Utility classes */
 .text-right {
   text-align: right;
 }
 
-.text-center {
+.loading {
   text-align: center;
+  padding: 2rem;
+  color: var(--secondary-text);
 }
 
-.text-success {
-  color: var(--color-success);
-}
-
-.text-error {
-  color: var(--color-error);
-}
-
-.text-warning {
-  color: var(--color-warning);
-}
-
-.font-bold {
-  font-weight: 700;
-}
-
-.font-semibold {
-  font-weight: 600;
-}
-
-.font-medium {
-  font-weight: 500;
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: var(--secondary-text);
 }

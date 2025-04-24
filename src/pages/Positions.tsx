@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom"; // Add this import
 import { useWallet } from "@suiet/wallet-kit";
 import * as cetusService from "../services/cetusService";
 import * as blockVisionService from "../services/blockVisionService";
@@ -426,27 +427,71 @@ function Positions() {
   };
 
   return (
-    <div className="p-4">
-      <h2 className="text-2xl font-bold mb-4">Your Liquidity Positions</h2>
+    <div className="max-w-6xl mx-auto px-4 py-6">
+      {/* Updated header with navigation */}
+      <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="flex flex-col md:flex-row items-start md:items-center">
+          <h1 className="text-2xl font-bold text-white mr-6">My Positions</h1>
+
+          {/* Navigation links */}
+          <div className="flex space-x-6 mt-2 md:mt-0">
+            <Link
+              to="/"
+              className="text-gray-400 hover:text-white font-medium border-b-2 border-transparent hover:border-gray-700 pb-1 transition-colors"
+            >
+              Pools
+            </Link>
+            <Link
+              to="/positions"
+              className="text-white font-medium border-b-2 border-blue-500 pb-1"
+            >
+              My Positions
+            </Link>
+          </div>
+        </div>
+      </div>
 
       {loading ? (
-        <div className="text-center py-10">Loading positions...</div>
+        <div className="bg-gray-800 rounded-xl p-10 text-center flex flex-col items-center justify-center">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500 mb-4"></div>
+          <p className="text-gray-400">Loading positions...</p>
+        </div>
       ) : error ? (
-        <div className="text-center py-10 text-red-500">
-          {error}
+        <div className="bg-gray-800 rounded-xl p-10 text-center">
+          <p className="text-red-400 mb-4">{error}</p>
           <button
-            className="ml-4 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
             onClick={reloadPositions}
           >
             Retry
           </button>
         </div>
+      ) : !connected ? (
+        <div className="bg-gray-800 rounded-xl p-10 text-center">
+          <p className="text-gray-400 mb-4">
+            Please connect your wallet to view your positions.
+          </p>
+          <button
+            onClick={() => wallet.select()}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+          >
+            Connect Wallet
+          </button>
+        </div>
       ) : poolPositions.length === 0 ? (
-        <div className="text-center py-10 text-gray-500">
-          You don't have any liquidity positions.
+        <div className="bg-gray-800 rounded-xl p-10 text-center">
+          <p className="text-gray-400 mb-4">
+            You don't have any liquidity positions.
+          </p>
+          <Link
+            to="/"
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors inline-block"
+          >
+            Add Liquidity
+          </Link>
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <div className="bg-gray-800 rounded-xl overflow-hidden">
           <table className="min-w-full">
             <thead>
               <tr className="border-b border-gray-700">

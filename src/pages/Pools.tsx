@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { Link } from "react-router-dom"; // Add this import
 import { useWallet } from "@suiet/wallet-kit";
 import SearchBar from "../components/SearchBar";
 import PoolTable from "../components/PoolTable";
@@ -391,9 +392,31 @@ const Pools: React.FC = () => {
   });
 
   return (
-    <div className="p-4">
-      <div className="mb-4 flex justify-between items-center">
-        <div className="w-full sm:w-1/2">
+    <div className="max-w-6xl mx-auto px-4 py-6">
+      <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="flex flex-col md:flex-row items-start md:items-center">
+          <h1 className="text-2xl font-bold text-white mr-6">
+            Liquidity Pools
+          </h1>
+
+          {/* Navigation section with links */}
+          <div className="flex space-x-6 mt-2 md:mt-0">
+            <Link
+              to="/"
+              className="text-white font-medium border-b-2 border-blue-500 pb-1"
+            >
+              Pools
+            </Link>
+            <Link
+              to="/positions"
+              className="text-gray-400 hover:text-white font-medium border-b-2 border-transparent hover:border-gray-700 pb-1 transition-colors"
+            >
+              My Positions
+            </Link>
+          </div>
+        </div>
+
+        <div className="w-full md:w-1/2">
           <SearchBar
             value={searchTerm}
             onChange={setSearchTerm}
@@ -402,23 +425,46 @@ const Pools: React.FC = () => {
             isSearching={isSearching}
           />
         </div>
+      </div>
+
+      <div className="mb-4 flex justify-between items-center">
+        <div className="flex items-center space-x-2">
+          {availableDexes.length > 0 && (
+            <div className="flex items-center bg-gray-800 rounded-md px-3 py-2 border border-gray-700">
+              <span className="text-gray-400 text-sm mr-2">DEX:</span>
+              <select
+                className="bg-transparent text-white outline-none cursor-pointer"
+                value={selectedDex || ""}
+                onChange={(e) => handleDexChange(e.target.value || null)}
+              >
+                {availableDexes.map((dex) => (
+                  <option key={dex} value={dex} className="bg-gray-800">
+                    {dex.charAt(0).toUpperCase() + dex.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
 
         <div className="flex items-center">
           {isSearching ? (
             <span className="text-sm text-blue-400 mr-2">Searching...</span>
           ) : searchResults.length > 0 ? (
-            <span className="text-sm text-gray-400">
-              {searchResults.length} results
+            <div className="flex items-center">
+              <span className="text-sm text-gray-400">
+                {searchResults.length} results
+              </span>
               <button
                 onClick={() => {
                   setSearchResults([]);
                   setSearchTerm("");
                 }}
-                className="ml-2 text-blue-500 hover:text-blue-400 underline"
+                className="ml-2 text-sm text-blue-400 hover:text-blue-300 underline"
               >
                 Clear
               </button>
-            </span>
+            </div>
           ) : loadingMetadata ? (
             <span className="text-sm text-gray-400">
               Loading token icons...
@@ -429,9 +475,9 @@ const Pools: React.FC = () => {
 
       {/* DEX support info banner - only show when non-Cetus DEX is selected */}
       {selectedDex && selectedDex.toLowerCase() !== "cetus" && (
-        <div className="mb-4 p-3 bg-blue-900 bg-opacity-30 border border-blue-700 rounded-md">
+        <div className="mb-6 p-4 bg-blue-900/20 border border-blue-800/50 rounded-lg">
           <div className="flex items-start">
-            <div className="text-blue-400 mr-2">
+            <div className="text-blue-400 mr-3">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="20"
@@ -449,10 +495,12 @@ const Pools: React.FC = () => {
               </svg>
             </div>
             <div>
-              <p className="text-blue-200">
+              <p className="text-blue-100">
                 Note: Currently only <strong>Cetus</strong> pools fully support
                 deposits through our interface. Support for{" "}
-                {selectedDex.charAt(0).toUpperCase() + selectedDex.slice(1)}{" "}
+                <span className="font-medium">
+                  {selectedDex.charAt(0).toUpperCase() + selectedDex.slice(1)}{" "}
+                </span>
                 pools is coming soon.
               </p>
             </div>
@@ -461,29 +509,36 @@ const Pools: React.FC = () => {
       )}
 
       {loading ? (
-        <div className="text-center py-10">Loading pools...</div>
+        <div className="bg-gray-800 rounded-xl p-10 text-center flex flex-col items-center justify-center">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500 mb-4"></div>
+          <p className="text-gray-400">Loading pools data...</p>
+        </div>
       ) : displayedPools.length === 0 ? (
-        <div className="text-center py-10 text-gray-500">
-          No pools found with the current filters.
+        <div className="bg-gray-800 rounded-xl p-10 text-center">
+          <p className="text-gray-400 mb-2">
+            No pools found with the current filters.
+          </p>
           <button
             onClick={handleResetFilters}
-            className="ml-2 text-blue-500 hover:text-blue-400 underline"
+            className="text-blue-400 hover:text-blue-300 underline"
           >
             Reset Filters
           </button>
         </div>
       ) : (
-        <PoolTable
-          pools={displayedPools}
-          sortColumn={sortColumn}
-          sortOrder={sortOrder}
-          onSort={handleSortChange}
-          onDeposit={handleDeposit}
-          supportedDex={["cetus"]}
-          availableDexes={availableDexes}
-          selectedDex={selectedDex}
-          onDexChange={handleDexChange}
-        />
+        <div className="bg-gray-800 rounded-xl overflow-hidden">
+          <PoolTable
+            pools={displayedPools}
+            sortColumn={sortColumn}
+            sortOrder={sortOrder}
+            onSort={handleSortChange}
+            onDeposit={handleDeposit}
+            supportedDex={["cetus"]}
+            availableDexes={availableDexes}
+            selectedDex={selectedDex}
+            onDexChange={handleDexChange}
+          />
+        </div>
       )}
 
       {/* Render modal conditionally */}

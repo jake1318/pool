@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { PoolInfo } from "../services/coinGeckoService";
-import { TokenLogo } from "./TokenLogo";
-import "../styles/components/Modals.scss";
+import { useWallet } from "@suiet/wallet-kit";
 
 interface DepositModalProps {
   pool: PoolInfo;
@@ -14,83 +13,106 @@ const DepositModal: React.FC<DepositModalProps> = ({
   onConfirm,
   onClose,
 }) => {
-  const [amountA, setAmountA] = useState<string>("");
-  const [amountB, setAmountB] = useState<string>("");
+  const wallet = useWallet();
+  const [amountA, setAmountA] = useState("");
+  const [amountB, setAmountB] = useState("");
+  const [balanceA, setBalanceA] = useState<number | null>(null);
+  const [balanceB, setBalanceB] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  // Reset amounts when the modal opens with a new pool
   useEffect(() => {
-    setAmountA("");
-    setAmountB("");
-    console.log("DepositModal rendered for pool:", pool.name);
-  }, [pool]);
+    async function fetchBalances() {
+      if (!wallet.connected) return;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+      try {
+        setLoading(true);
+        // In a real app, this would fetch the balances from the wallet
+        // For now we'll just use placeholders
+        setBalanceA(100);
+        setBalanceB(100);
+      } catch (error) {
+        console.error("Failed to fetch balances:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchBalances();
+  }, [wallet.connected, pool]);
+
+  const handleSetMax = (token: "A" | "B") => {
+    if (token === "A" && balanceA !== null) {
+      setAmountA(balanceA.toString());
+    } else if (token === "B" && balanceB !== null) {
+      setAmountB(balanceB.toString());
+    }
+  };
+
+  const handleConfirm = () => {
     const numA = parseFloat(amountA);
     const numB = parseFloat(amountB);
-    if (isNaN(numA) || isNaN(numB) || numA <= 0 || numB <= 0) {
-      alert("Please enter valid amounts for both tokens.");
-      return;
-    }
+    if (isNaN(numA) || isNaN(numB)) return;
     onConfirm(numA, numB);
   };
 
   return (
     <div className="modal-overlay">
       <div className="modal">
-        <h2>Deposit Liquidity</h2>
-        <form onSubmit={handleSubmit}>
-          <div className="modal-inputs">
-            <div className="input-group">
-              <label>
-                <div className="flex items-center">
-                  <TokenLogo
-                    logoUrl={pool.tokenAMetadata?.logo_uri}
-                    symbol={pool.tokenA}
-                    size="sm"
-                  />
-                  <span className="ml-2">{pool.tokenA} Amount</span>
-                </div>
-              </label>
-              <input
-                type="number"
-                step="any"
-                value={amountA}
-                onChange={(e) => setAmountA(e.target.value)}
-                placeholder={`Enter ${pool.tokenA} amount`}
-                required
-              />
-            </div>
-            <div className="input-group">
-              <label>
-                <div className="flex items-center">
-                  <TokenLogo
-                    logoUrl={pool.tokenBMetadata?.logo_uri}
-                    symbol={pool.tokenB}
-                    size="sm"
-                  />
-                  <span className="ml-2">{pool.tokenB} Amount</span>
-                </div>
-              </label>
-              <input
-                type="number"
-                step="any"
-                value={amountB}
-                onChange={(e) => setAmountB(e.target.value)}
-                placeholder={`Enter ${pool.tokenB} amount`}
-                required
-              />
-            </div>
-          </div>
-          <div className="modal-actions">
-            <button type="button" className="btn-cancel" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="submit" className="btn-confirm">
-              Deposit
+        <div className="modal-header">
+          <h3 className="modal-title">Deposit Liquidity</h3>
+          <button className="close-button" onClick={onClose}>
+            ×
+          </button>
+        </div>
+
+        <div className="input-group">
+          <label>{pool.tokenA}</label>
+          <input
+            type="number"
+            value={amountA}
+            onChange={(e) => setAmountA(e.target.value)}
+            placeholder={`Enter ${pool.tokenA} amount`}
+          />
+          <div className="balance">
+            <span>
+              Balance: {loading ? "Loading..." : balanceA?.toFixed(6)}
+            </span>
+            <button className="max-button" onClick={() => handleSetMax("A")}>
+              MAX
             </button>
           </div>
-        </form>
+        </div>
+
+        <div className="input-group">
+          <label>{pool.tokenB}</label>
+          <input
+            type="number"
+            value={amountB}
+            onChange={(e) => setAmountB(e.target.value)}
+            placeholder={`Enter ${pool.tokenB} amount`}
+          />
+          <div className="balance">
+            <span>
+              Balance: {loading ? "Loading..." : balanceB?.toFixed(6)}
+            </span>
+            <button className="max-button" onClick={() => handleSetMax("B")}>
+              MAX
+            </button>
+          </div>
+        </div>
+
+        <div className="button-group">
+          <button className="cancel" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="confirm"
+            onClick={handleConfirm}
+            disabled={!amountA || !amountB}
+          >
+            Deposit
+          </button>
+        </div>
       </div>
     </div>
   );
