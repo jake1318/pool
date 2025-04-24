@@ -1,0 +1,96 @@
+.pools-table {
+  width: 100%;
+
+  thead {
+    tr {
+      th {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background-color: var(--color-bg-secondary);
+
+        .sort-indicator {
+          display: inline-flex;
+          align-items: center;
+
+          .sort-icon {
+            opacity: 0.5;
+            transition: opacity 0.15s, transform 0.15s;
+          }
+
+          &.active {
+            .sort-icon {
+              opacity: 1;
+            }
+
+            &.asc .sort-icon {
+              transform: rotate(180deg);
+            }
+          }
+        }
+
+        &:hover .sort-indicator .sort-icon {
+          opacity: 0.8;
+        }
+      }
+    }
+  }
+
+  tbody {
+    tr {
+      transition: background-color 0.15s;
+
+      &:hover {
+        background-color: rgba(var(--color-bg-hover-rgb), 0.5);
+      }
+
+      td {
+        vertical-align: middle;
+
+        .pool-info {
+          .pool-pair {
+            margin-bottom: 0.25rem;
+          }
+
+          .fee-tier {
+            margin-left: 0.5rem;
+          }
+        }
+
+        .dex-info {
+          .dex-name {
+            text-transform: capitalize;
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+          }
+
+          .reward-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+
+            .reward-badge {
+              background-color: rgba(var(--color-success-rgb), 0.15);
+              color: var(--color-success);
+              font-size: 0.75rem;
+              padding: 0.125rem 0.5rem;
+              border-radius: 1rem;
+              display: inline-flex;
+              align-items: center;
+            }
+          }
+        }
+
+        .apr-value {
+          &.high {
+            color: var(--color-success);
+          }
+
+          &.medium {
+            color: var(--color-success-muted);
+          }
+        }
+      }
+    }
+  }
+}

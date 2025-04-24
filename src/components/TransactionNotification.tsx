@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import "./TransactionNotification.scss";
 
 interface TransactionNotificationProps {
   message: string;

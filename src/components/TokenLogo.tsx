@@ -1,4 +1,5 @@
 import React from "react";
+import "./TokenLogo.scss";
 
 interface TokenLogoProps {
   logoUrl?: string | null;

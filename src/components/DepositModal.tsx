@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { PoolInfo } from "../services/coinGeckoService";
 import { TokenLogo } from "./TokenLogo";
+import "./Modals.scss";
 
 interface DepositModalProps {
   pool: PoolInfo;

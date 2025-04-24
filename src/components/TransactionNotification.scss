@@ -1,0 +1,108 @@
+.transaction-notification {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  max-width: 24rem;
+  width: calc(100% - 4rem);
+  background-color: var(--color-bg-primary);
+  border-radius: 0.75rem;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+  padding: 1.25rem;
+  z-index: 100;
+  animation: slide-in-right 0.3s ease-out;
+
+  @keyframes slide-in-right {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  .notification-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+
+    .status-icon {
+      flex-shrink: 0;
+      width: 1.5rem;
+      height: 1.5rem;
+      margin-right: 0.75rem;
+
+      &.success {
+        color: var(--color-success);
+      }
+
+      &.error {
+        color: var(--color-error);
+      }
+    }
+
+    .notification-title {
+      flex-grow: 1;
+      font-weight: 600;
+      margin-right: 1rem;
+    }
+
+    .close-button {
+      flex-shrink: 0;
+      background: transparent;
+      border: none;
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      width: 1.5rem;
+      height: 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      transition: background-color 0.15s, color 0.15s;
+
+      &:hover {
+        background-color: rgba(var(--color-bg-hover-rgb), 0.5);
+        color: var(--color-text-primary);
+      }
+    }
+  }
+
+  .notification-body {
+    color: var(--color-text-secondary);
+    font-size: 0.9375rem;
+    margin-bottom: 1rem;
+  }
+
+  .notification-footer {
+    display: flex;
+    justify-content: flex-start;
+
+    .view-link {
+      display: inline-flex;
+      align-items: center;
+      color: var(--color-accent);
+      font-size: 0.875rem;
+      font-weight: 500;
+      text-decoration: none;
+
+      .link-icon {
+        margin-right: 0.375rem;
+      }
+
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+  }
+
+  &.success {
+    border-left: 4px solid var(--color-success);
+  }
+
+  &.error {
+    border-left: 4px solid var(--color-error);
+  }
+}

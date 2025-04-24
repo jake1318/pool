@@ -1,6 +1,6 @@
 import React from "react";
 import { ConnectButton } from "@suiet/wallet-kit";
-import Home from "./pages/Home";
+import "./styles/main.scss";
 
 const App: React.FC = () => {
   return (

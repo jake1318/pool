@@ -6,6 +6,7 @@ import { NormalizedPosition, PoolGroup } from "../services/blockVisionService";
 import WithdrawModal from "../components/WithdrawModal";
 import TransactionNotification from "../components/TransactionNotification";
 import { formatLargeNumber, formatDollars } from "../utils/formatters";
+import "./Positions.scss";
 
 interface WithdrawModalState {
   isOpen: boolean;

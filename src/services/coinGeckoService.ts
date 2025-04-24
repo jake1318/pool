@@ -22,6 +22,7 @@ export interface PoolInfo {
 // Updated CoinGecko Pro API endpoint
 const COINGECKO_API_URL = "https://pro-api.coingecko.com/api/v3";
 const POOLS_ENDPOINT = "/onchain/pools/megafilter";
+const SEARCH_ENDPOINT = "/onchain/search/pools";
 const COINGECKO_API_KEY = "CG-RsxinQSgFE2ti5oXgH9CUZgp"; // Your API key from the fetch example
 
 // Map of common tokens to their Sui addresses
@@ -171,26 +172,125 @@ export async function getDefaultPools(): Promise<PoolInfo[]> {
 }
 
 /**
- * Search pools using CoinGecko Pro API
+ * Search pools using CoinGecko API - using the dedicated search endpoint
  */
 export async function searchPools(query: string): Promise<PoolInfo[]> {
-  try {
-    // In a real app, you'd ideally have a search-specific endpoint
-    // For now, we'll fetch all pools and filter client-side
-    const allPools = await getDefaultPools();
-    const normalizedQuery = query.toLowerCase();
+  if (!query.trim()) return [];
 
-    return allPools.filter(
-      (pool) =>
-        pool.name.toLowerCase().includes(normalizedQuery) ||
-        pool.tokenA.toLowerCase().includes(normalizedQuery) ||
-        pool.tokenB.toLowerCase().includes(normalizedQuery) ||
-        pool.address.toLowerCase().includes(normalizedQuery) ||
-        pool.dex.toLowerCase().includes(normalizedQuery)
+  console.log(`Searching for pools matching: "${query}"`);
+
+  try {
+    // Use the dedicated search endpoint
+    const options = {
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        "x-cg-pro-api-key": COINGECKO_API_KEY,
+      },
+    };
+
+    // Encode the query parameter properly
+    const encodedQuery = encodeURIComponent(query);
+
+    const response = await fetch(
+      `${COINGECKO_API_URL}${SEARCH_ENDPOINT}?query=${encodedQuery}&network=sui-network&include=base_token,quote_token,dex`,
+      options
     );
+
+    if (!response.ok) {
+      throw new Error(
+        `API search request failed with status: ${response.status}`
+      );
+    }
+
+    const data = await response.json();
+
+    if (!data.data || !Array.isArray(data.data) || data.data.length === 0) {
+      console.log("No search results found");
+      return [];
+    }
+
+    // Map the CoinGecko response to our PoolInfo format
+    const pools: PoolInfo[] = data.data.map((pool: any) => {
+      try {
+        // Extract token symbols and addresses
+        const baseTokenInfo = pool.relationships.base_token.data.id
+          .split("_")[1]
+          .split("::");
+        const quoteTokenInfo = pool.relationships.quote_token.data.id
+          .split("_")[1]
+          .split("::");
+
+        const baseToken = baseTokenInfo[baseTokenInfo.length - 1];
+        const quoteToken = quoteTokenInfo[quoteTokenInfo.length - 1];
+
+        // Calculate fees and APR
+        const volume24h = parseFloat(pool.attributes?.volume_usd?.h24 || "0");
+        const reserveUsd = parseFloat(pool.attributes?.reserve_in_usd || "0");
+        const feesUsd = volume24h * 0.003; // Estimate fees as 0.3% of volume
+
+        // Calculate APR
+        let apr = 0;
+        if (reserveUsd > 0) {
+          const dailyFeesPercent = (feesUsd / reserveUsd) * 100;
+          apr = dailyFeesPercent * 365;
+        }
+
+        return {
+          address: pool.attributes.address,
+          name: pool.attributes.name || `${baseToken} / ${quoteToken}`,
+          dex: pool.relationships.dex.data.id,
+          tokenA: baseToken || "Unknown",
+          tokenB: quoteToken || "Unknown",
+          tokenAAddress: pool.relationships.base_token.data.id.split("_")[1],
+          tokenBAddress: pool.relationships.quote_token.data.id.split("_")[1],
+          liquidityUSD: reserveUsd,
+          volumeUSD: volume24h,
+          feesUSD: feesUsd,
+          apr: apr,
+          rewardSymbols: [], // API doesn't provide reward info directly
+        };
+      } catch (err) {
+        console.error("Error processing pool data:", err);
+        // Return a minimal valid pool object if there's an error parsing one pool
+        return {
+          address: pool.attributes?.address || "unknown",
+          name: pool.attributes?.name || "Unknown Pool",
+          tokenA: "Unknown",
+          tokenB: "Unknown",
+          dex: pool.relationships?.dex?.data?.id || "Unknown",
+          liquidityUSD: 0,
+          volumeUSD: 0,
+          feesUSD: 0,
+          apr: 0,
+          rewardSymbols: [],
+        };
+      }
+    });
+
+    console.log(`Found ${pools.length} pools matching search query`);
+    return pools;
   } catch (error) {
-    console.error("Search failed:", error);
-    return [];
+    console.error("Error searching pools:", error);
+    // If the search API fails, fall back to client-side filtering
+    console.log("Falling back to client-side search...");
+
+    try {
+      const allPools = await getDefaultPools();
+      const normalizedQuery = query.toLowerCase();
+
+      return allPools.filter(
+        (pool) =>
+          pool.name.toLowerCase().includes(normalizedQuery) ||
+          pool.tokenA.toLowerCase().includes(normalizedQuery) ||
+          pool.tokenB.toLowerCase().includes(normalizedQuery) ||
+          pool.address.toLowerCase().includes(normalizedQuery) ||
+          pool.dex.toLowerCase().includes(normalizedQuery)
+      );
+    } catch (fallbackError) {
+      console.error("Even fallback search failed:", fallbackError);
+      return [];
+    }
   }
 }
 

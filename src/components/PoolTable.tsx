@@ -2,6 +2,7 @@ import React from "react";
 import { PoolInfo } from "../services/coinGeckoService";
 import { formatDollars, formatPercentage } from "../utils/formatters";
 import { TokenLogo, PoolPair } from "./TokenLogo";
+import "./PoolTable.scss";
 
 interface PoolTableProps {
   pools: PoolInfo[];
@@ -11,6 +12,10 @@ interface PoolTableProps {
     column: "dex" | "liquidityUSD" | "volumeUSD" | "feesUSD" | "apr"
   ) => void;
   onDeposit: (pool: PoolInfo) => void;
+  supportedDex?: string[];
+  availableDexes: string[];
+  selectedDex: string | null;
+  onDexChange: (dex: string | null) => void;
 }
 
 /** Returns a coloured-text CSS class depending on APR */
@@ -27,8 +32,12 @@ const PoolTable: React.FC<PoolTableProps> = ({
   sortOrder,
   onSort,
   onDeposit,
+  supportedDex = [],
+  availableDexes,
+  selectedDex,
+  onDexChange,
 }) => {
-  /** header cell builder */
+  /** Regular header cell builder */
   const header = (
     label: string,
     col: PoolTableProps["sortColumn"],
@@ -49,6 +58,42 @@ const PoolTable: React.FC<PoolTableProps> = ({
     </th>
   );
 
+  /** DEX dropdown header cell */
+  const dexHeader = () => (
+    <th className="py-3 px-4 text-left">
+      <div className="flex items-center space-x-2">
+        <select
+          value={selectedDex || "all"}
+          onChange={(e) =>
+            onDexChange(e.target.value === "all" ? null : e.target.value)
+          }
+          className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-white text-sm"
+        >
+          <option value="all">All DEXes</option>
+          {availableDexes.map((dex) => (
+            <option key={dex} value={dex}>
+              {dex.charAt(0).toUpperCase() + dex.slice(1)}
+            </option>
+          ))}
+        </select>
+        <span
+          className="cursor-pointer text-xs text-gray-400 hover:text-white"
+          onClick={() => onDexChange("cetus")}
+          title="Reset to Default"
+        >
+          ↺
+        </span>
+      </div>
+    </th>
+  );
+
+  // Check if a DEX is supported
+  const isDexSupported = (dex: string): boolean => {
+    return (
+      supportedDex.length === 0 || supportedDex.includes(dex.toLowerCase())
+    );
+  };
+
   // Handle deposit button click with stop propagation
   const handleDepositClick = (e: React.MouseEvent, pool: PoolInfo) => {
     e.stopPropagation(); // Stop event propagation
@@ -62,7 +107,7 @@ const PoolTable: React.FC<PoolTableProps> = ({
         <thead>
           <tr className="border-b border-gray-700">
             <th className="text-left py-3 px-4">Pool</th>
-            {header("DEX", "dex")}
+            {dexHeader()} {/* DEX dropdown instead of regular header */}
             {header("Liquidity", "liquidityUSD", "text-right")}
             {header("Volume (24h)", "volumeUSD", "text-right")}
             {header("Fees (24h)", "feesUSD", "text-right")}
@@ -152,10 +197,20 @@ const PoolTable: React.FC<PoolTableProps> = ({
                 {/* -------- Action -------- */}
                 <td className="text-right py-4 px-4">
                   <button
-                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                    className={`px-4 py-2 rounded transition ${
+                      isDexSupported(pool.dex)
+                        ? "bg-blue-600 text-white hover:bg-blue-700"
+                        : "bg-gray-700 text-gray-300 cursor-not-allowed"
+                    }`}
                     onClick={(e) => handleDepositClick(e, pool)}
+                    disabled={!isDexSupported(pool.dex)}
+                    title={
+                      !isDexSupported(pool.dex)
+                        ? `${pool.dex} pools are not yet supported`
+                        : undefined
+                    }
                   >
-                    Deposit
+                    {isDexSupported(pool.dex) ? "Deposit" : "Coming Soon"}
                   </button>
                 </td>
               </tr>
