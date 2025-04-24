@@ -9,10 +9,10 @@
   },
   "dependencies": {
     "@cetusprotocol/cetus-sui-clmm-sdk": "^5.3.4",
-    "@mysten/sui": "^1.20.0",
+    "@mysten/sui": "^1.28.2",
     "@suiet/wallet-kit": "^0.3.4",
-    "react": "^18.2.0",
     "@suilend/sdk": "^1.0.0",
+    "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
