@@ -2,7 +2,7 @@ import React from "react";
 import { PoolInfo } from "../services/coinGeckoService";
 import { formatDollars, formatPercentage } from "../utils/formatters";
 import { TokenLogo, PoolPair } from "./TokenLogo";
-import "./PoolTable.scss";
+import "../styles/components/PoolTable.scss";
 
 interface PoolTableProps {
   pools: PoolInfo[];

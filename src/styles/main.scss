@@ -1,4 +1,4 @@
-@import "variables";
+@import "./variables.scss";
 
 // Base styles
 html,
@@ -26,16 +26,16 @@ button {
   border: none;
 }
 
-// Import component styles
-@import "components/TokenLogo";
-@import "components/SearchBar";
-@import "components/PoolTable";
-@import "components/Modals";
-@import "components/TransactionNotification";
+// Import component styles - make sure to check the file paths!
+@import "./components/TokenLogo.scss";
+@import "./components/SearchBar.scss";
+@import "./components/PoolTable.scss";
+@import "./components/Modals.scss";
+@import "./components/TransactionNotification.scss";
 
 // Import page styles
-@import "pages/Pools";
-@import "pages/Positions";
+@import "./pages/Pools.scss";
+@import "./pages/Positions.scss";
 
 // Utility classes
 .text-right {

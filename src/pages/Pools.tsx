@@ -8,7 +8,7 @@ import { PoolInfo } from "../services/coinGeckoService";
 import * as coinGeckoService from "../services/coinGeckoService";
 import * as cetusService from "../services/cetusService";
 import * as birdeyeService from "../services/birdeyeService";
-import "./Pools.scss";
+import "../styles/pages/Pools.scss";
 
 const MAX_TOKENS_FOR_METADATA = 20; // Limit the number of tokens we fetch metadata for initially
 

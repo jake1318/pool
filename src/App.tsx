@@ -1,5 +1,6 @@
 import React from "react";
 import { ConnectButton } from "@suiet/wallet-kit";
+import Pools from "./pages/Pools"; // Import the Pools component
 import "./styles/main.scss";
 
 const App: React.FC = () => {
@@ -9,7 +10,9 @@ const App: React.FC = () => {
         <h1 className="app-title">Sui Liquidity Pools</h1>
         <ConnectButton />
       </header>
-      <Home />
+      <main>
+        <Pools /> {/* Use the Pools component here instead of Home */}
+      </main>
     </div>
   );
 };

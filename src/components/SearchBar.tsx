@@ -1,5 +1,5 @@
 import React, { KeyboardEvent } from "react";
-import "./SearchBar.scss";
+import "../styles/components/SearchBar.scss";
 
 interface SearchBarProps {
   value: string;
