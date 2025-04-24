@@ -25,16 +25,41 @@ export const TokenLogo: React.FC<TokenLogoProps> = ({
           alt={symbol}
           loading="lazy"
           onError={(e) => {
-            const parent = e.currentTarget.parentNode as HTMLElement;
-            if (parent) parent.innerHTML = "";
+            // Instead of clearing the parent, replace with the symbol's first letter
+            const target = e.currentTarget;
+            const parent = target.parentNode as HTMLElement;
+            if (parent) {
+              // Hide the image
+              target.style.display = "none";
+              // Add a fallback element with the symbol's first letter
+              const fallback = document.createElement("span");
+              fallback.className = "token-fallback";
+              fallback.textContent = symbol ? symbol.charAt(0) : "?";
+              parent.appendChild(fallback);
+            }
           }}
           onLoad={(e) => {
             if ((e.currentTarget as HTMLImageElement).naturalWidth === 0) {
-              (e.currentTarget.parentNode as HTMLElement).innerHTML = "";
+              const target = e.currentTarget;
+              const parent = target.parentNode as HTMLElement;
+              if (parent) {
+                // Hide the image
+                target.style.display = "none";
+                // Add a fallback element with the symbol's first letter
+                const fallback = document.createElement("span");
+                fallback.className = "token-fallback";
+                fallback.textContent = symbol ? symbol.charAt(0) : "?";
+                parent.appendChild(fallback);
+              }
             }
           }}
         />
-      ) : null}
+      ) : (
+        // Add a default fallback when no logoUrl is provided
+        <span className="token-fallback">
+          {symbol ? symbol.charAt(0) : "?"}
+        </span>
+      )}
     </div>
   );
 };

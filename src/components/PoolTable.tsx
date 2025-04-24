@@ -1,8 +1,3 @@
-/* ------------------------------------------------------------------
- *  src/components/PoolTable.tsx
- *  Renders the Liquidity Pools table with uniform token logos
- * ----------------------------------------------------------------- */
-
 import React from "react";
 import { PoolInfo } from "../services/coinGeckoService";
 import { formatDollars, formatPercentage } from "../utils/formatters";
@@ -53,6 +48,13 @@ const PoolTable: React.FC<PoolTableProps> = ({
       )}
     </th>
   );
+
+  // Handle deposit button click with stop propagation
+  const handleDepositClick = (e: React.MouseEvent, pool: PoolInfo) => {
+    e.stopPropagation(); // Stop event propagation
+    console.log("Deposit button clicked for:", pool.name);
+    onDeposit(pool);
+  };
 
   return (
     <div className="overflow-x-auto">
@@ -151,7 +153,7 @@ const PoolTable: React.FC<PoolTableProps> = ({
                 <td className="text-right py-4 px-4">
                   <button
                     className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-                    onClick={() => onDeposit(pool)}
+                    onClick={(e) => handleDepositClick(e, pool)}
                   >
                     Deposit
                   </button>

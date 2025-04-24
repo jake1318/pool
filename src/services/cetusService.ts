@@ -34,90 +34,6 @@ function toBaseUnit(amount: number, decimals: number): string {
   return baseAmount.toString();
 }
 
-/**
- * Show a transaction digest popup with link to SuiVision
- */
-function showTransactionPopup(digest: string): void {
-  // Create a container for the popup
-  const popupContainer = document.createElement("div");
-  popupContainer.style.position = "fixed";
-  popupContainer.style.bottom = "20px";
-  popupContainer.style.right = "20px";
-  popupContainer.style.backgroundColor = "#ffffff";
-  popupContainer.style.boxShadow = "0 0 10px rgba(0,0,0,0.2)";
-  popupContainer.style.borderRadius = "8px";
-  popupContainer.style.padding = "15px";
-  popupContainer.style.zIndex = "10000";
-  popupContainer.style.maxWidth = "400px";
-  popupContainer.style.display = "flex";
-  popupContainer.style.flexDirection = "column";
-  popupContainer.style.gap = "10px";
-
-  // Create a header
-  const header = document.createElement("div");
-  header.style.display = "flex";
-  header.style.justifyContent = "space-between";
-  header.style.alignItems = "center";
-
-  const title = document.createElement("h3");
-  title.textContent = "Transaction Submitted";
-  title.style.margin = "0";
-  title.style.fontSize = "16px";
-  title.style.fontWeight = "bold";
-
-  const closeButton = document.createElement("button");
-  closeButton.textContent = "×";
-  closeButton.style.backgroundColor = "transparent";
-  closeButton.style.border = "none";
-  closeButton.style.fontSize = "20px";
-  closeButton.style.cursor = "pointer";
-  closeButton.onclick = () => document.body.removeChild(popupContainer);
-
-  header.appendChild(title);
-  header.appendChild(closeButton);
-
-  // Create content
-  const content = document.createElement("div");
-
-  const digestText = document.createElement("p");
-  digestText.textContent = `Digest: ${digest.substring(
-    0,
-    8
-  )}...${digest.substring(digest.length - 8)}`;
-  digestText.style.margin = "5px 0";
-  digestText.style.fontSize = "14px";
-
-  const link = document.createElement("a");
-  link.href = `https://suivision.xyz/txblock/${digest}`;
-  link.textContent = "View on SuiVision";
-  link.target = "_blank";
-  link.style.display = "inline-block";
-  link.style.padding = "8px 12px";
-  link.style.backgroundColor = "#3b82f6";
-  link.style.color = "white";
-  link.style.textDecoration = "none";
-  link.style.borderRadius = "4px";
-  link.style.fontSize = "14px";
-  link.style.fontWeight = "medium";
-
-  content.appendChild(digestText);
-  content.appendChild(link);
-
-  // Add header and content to popup
-  popupContainer.appendChild(header);
-  popupContainer.appendChild(content);
-
-  // Add popup to the body
-  document.body.appendChild(popupContainer);
-
-  // Auto-remove after 10 seconds
-  setTimeout(() => {
-    if (document.body.contains(popupContainer)) {
-      document.body.removeChild(popupContainer);
-    }
-  }, 10000);
-}
-
 // Common token decimals - helps us handle the most common ones
 const COMMON_DECIMALS: Record<string, number> = {
   SUI: 9,
@@ -217,7 +133,7 @@ export async function deposit(
   poolId: string,
   amountX: number,
   amountY: number
-): Promise<void> {
+): Promise<{ success: boolean; digest: string }> {
   if (!wallet.connected || !wallet.account?.address) {
     throw new Error("Wallet not connected");
   }
@@ -285,11 +201,6 @@ export async function deposit(
     },
   });
   console.log("Transaction completed, response:", openPositionRes);
-
-  // Show transaction popup for position creation
-  if (openPositionRes.digest) {
-    showTransactionPopup(openPositionRes.digest);
-  }
 
   // If we only got a digest, try to fetch the full transaction
   if (
@@ -484,10 +395,11 @@ export async function deposit(
   });
   console.log("Liquidity addition successful");
 
-  // Show transaction popup for liquidity addition
-  if (addLiquidityRes.digest) {
-    showTransactionPopup(addLiquidityRes.digest);
-  }
+  // Return the transaction result with digest
+  return {
+    success: true,
+    digest: addLiquidityRes.digest || "",
+  };
 }
 
 /**
@@ -498,7 +410,7 @@ export async function removeLiquidity(
   poolId: string,
   positionId: string,
   liquidityPct: number = 100
-): Promise<void> {
+): Promise<{ success: boolean; digest: string }> {
   if (!wallet.connected || !wallet.account?.address) {
     throw new Error("Wallet not connected");
   }
@@ -560,7 +472,11 @@ export async function removeLiquidity(
     transactionBlock: tx,
     options: { showEvents: true, showEffects: true },
   });
-  if (res.digest) showTransactionPopup(res.digest);
+
+  return {
+    success: true,
+    digest: res.digest || "",
+  };
 }
 
 /**
@@ -570,7 +486,7 @@ export async function closePosition(
   wallet: WalletContextState,
   poolId: string,
   positionId: string
-): Promise<void> {
+): Promise<{ success: boolean; digest: string }> {
   if (!wallet.connected || !wallet.account?.address) {
     throw new Error("Wallet not connected");
   }
@@ -633,7 +549,11 @@ export async function closePosition(
     transactionBlock: tx,
     options: { showEvents: true, showEffects: true },
   });
-  if (res.digest) showTransactionPopup(res.digest);
+
+  return {
+    success: true,
+    digest: res.digest || "",
+  };
 }
 
 /**
@@ -643,7 +563,7 @@ export async function collectFees(
   wallet: WalletContextState,
   poolId: string,
   positionId: string
-): Promise<void> {
+): Promise<{ success: boolean; digest: string }> {
   if (!wallet.connected || !wallet.account?.address) {
     throw new Error("Wallet not connected");
   }
@@ -670,7 +590,11 @@ export async function collectFees(
     transactionBlock: tx,
     options: { showEvents: true, showEffects: true },
   });
-  if (res.digest) showTransactionPopup(res.digest);
+
+  return {
+    success: true,
+    digest: res.digest || "",
+  };
 }
 
 /**
@@ -680,7 +604,7 @@ export async function collectRewards(
   wallet: WalletContextState,
   poolId: string,
   positionId: string
-): Promise<void> {
+): Promise<{ success: boolean; digest: string }> {
   if (!wallet.connected || !wallet.account?.address) {
     throw new Error("Wallet not connected");
   }
@@ -705,7 +629,10 @@ export async function collectRewards(
     .map((r: any) => r.coin_address);
   if (!rewarderCoinTypes.length) {
     console.log("No rewards owed");
-    return;
+    return {
+      success: true,
+      digest: "",
+    };
   }
 
   const tx = await sdk.Rewarder.collectRewarderTransactionPayload({
@@ -720,7 +647,11 @@ export async function collectRewards(
     transactionBlock: tx,
     options: { showEvents: true, showEffects: true },
   });
-  if (res.digest) showTransactionPopup(res.digest);
+
+  return {
+    success: true,
+    digest: res.digest || "",
+  };
 }
 
 /**

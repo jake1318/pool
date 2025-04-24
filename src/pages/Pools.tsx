@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useWallet } from "@suiet/wallet-kit";
 import SearchBar from "../components/SearchBar";
 import PoolTable from "../components/PoolTable";
 import DepositModal from "../components/DepositModal";
+import TransactionNotification from "../components/TransactionNotification";
 import { PoolInfo } from "../services/coinGeckoService";
 import * as coinGeckoService from "../services/coinGeckoService";
 import * as cetusService from "../services/cetusService";
@@ -25,6 +26,14 @@ const Pools: React.FC = () => {
 
   // Modal state
   const [modalPool, setModalPool] = useState<PoolInfo | null>(null);
+
+  // Transaction notification state
+  const [notification, setNotification] = useState<{
+    visible: boolean;
+    message: string;
+    txDigest?: string;
+    isSuccess: boolean;
+  } | null>(null);
 
   // Fetch pools and enhance them with token metadata
   useEffect(() => {
@@ -189,29 +198,73 @@ const Pools: React.FC = () => {
     }
   };
 
-  const handleDeposit = (pool: PoolInfo) => {
-    if (!wallet.connected) {
-      alert("Please connect your Sui wallet to deposit liquidity.");
-      return;
-    }
-    setModalPool(pool);
-  };
+  // Use useCallback to memoize the handler function
+  const handleDeposit = useCallback(
+    (pool: PoolInfo) => {
+      console.log("Deposit button clicked for pool:", pool.name);
 
-  const handleModalConfirm = (amtA: number, amtB: number) => {
+      if (!wallet.connected) {
+        setNotification({
+          visible: true,
+          message: "Please connect your Sui wallet to deposit liquidity.",
+          isSuccess: false,
+        });
+        return;
+      }
+
+      // Set the modal pool to trigger modal display
+      setModalPool(pool);
+    },
+    [wallet.connected]
+  );
+
+  const handleModalConfirm = async (amtA: number, amtB: number) => {
     if (!modalPool) return;
-    cetusService
-      .deposit(wallet, modalPool.address, amtA, amtB)
-      .then(() => {
-        alert(`Deposit tx sent for ${modalPool.name}`);
-        setModalPool(null);
-      })
-      .catch((err) => {
-        console.error("Deposit failed:", err);
-        alert("Deposit failed, see console.");
+
+    console.log(
+      `Confirming deposit of ${amtA} ${modalPool.tokenA} and ${amtB} ${modalPool.tokenB}`
+    );
+
+    try {
+      const result = await cetusService.deposit(
+        wallet,
+        modalPool.address,
+        amtA,
+        amtB
+      );
+      console.log("Deposit transaction result:", result);
+
+      // Close the modal
+      setModalPool(null);
+
+      // Show the notification with transaction details
+      setNotification({
+        visible: true,
+        message: `Deposit tx sent for ${modalPool.name}`,
+        txDigest: result.digest,
+        isSuccess: true,
       });
+    } catch (err) {
+      console.error("Deposit failed:", err);
+
+      setNotification({
+        visible: true,
+        message: `Deposit failed: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`,
+        isSuccess: false,
+      });
+    }
   };
 
-  const handleModalClose = () => setModalPool(null);
+  const handleModalClose = () => {
+    console.log("Closing deposit modal");
+    setModalPool(null);
+  };
+
+  const handleNotificationClose = () => {
+    setNotification(null);
+  };
 
   const currentPools =
     searchTerm && searchResults.length > 0 ? searchResults : defaultPools;
@@ -274,11 +327,22 @@ const Pools: React.FC = () => {
         />
       )}
 
+      {/* Render modal conditionally */}
       {modalPool && (
         <DepositModal
           pool={modalPool}
           onConfirm={handleModalConfirm}
           onClose={handleModalClose}
+        />
+      )}
+
+      {/* Render notification conditionally */}
+      {notification && notification.visible && (
+        <TransactionNotification
+          message={notification.message}
+          txDigest={notification.txDigest}
+          isSuccess={notification.isSuccess}
+          onClose={handleNotificationClose}
         />
       )}
     </div>

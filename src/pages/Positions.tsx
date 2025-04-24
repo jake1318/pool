@@ -4,6 +4,7 @@ import * as cetusService from "../services/cetusService";
 import * as blockVisionService from "../services/blockVisionService";
 import { NormalizedPosition, PoolGroup } from "../services/blockVisionService";
 import WithdrawModal from "../components/WithdrawModal";
+import TransactionNotification from "../components/TransactionNotification";
 import { formatLargeNumber, formatDollars } from "../utils/formatters";
 
 interface WithdrawModalState {
@@ -20,6 +21,13 @@ interface RewardsModalState {
   poolName: string;
   positions: NormalizedPosition[];
   totalRewards: blockVisionService.RewardInfo[];
+}
+
+interface TransactionNotificationState {
+  visible: boolean;
+  message: string;
+  txDigest?: string;
+  isSuccess: boolean;
 }
 
 function TokenLogo({
@@ -116,6 +124,10 @@ function Positions() {
   const [claimingPool, setClaimingPool] = useState<string | null>(null);
   const [withdrawingPool, setWithdrawingPool] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState<Record<string, boolean>>({});
+
+  // Transaction notification state
+  const [notification, setNotification] =
+    useState<TransactionNotificationState | null>(null);
 
   // Load user positions when wallet connects
   useEffect(() => {
@@ -248,17 +260,37 @@ function Positions() {
     });
   };
 
+  // Close notification
+  const handleNotificationClose = () => {
+    setNotification(null);
+  };
+
   // Handle claim action
   const handleClaim = async (poolAddress: string, positionIds: string[]) => {
-    if (!connected) return;
+    if (!connected) {
+      setNotification({
+        visible: true,
+        message: "Please connect your wallet to claim rewards",
+        isSuccess: false,
+      });
+      return;
+    }
 
     try {
       setClaimingPool(poolAddress);
+      let lastDigest = "";
 
       // For each position, claim rewards
       for (const positionId of positionIds) {
         try {
-          await cetusService.collectRewards(wallet, poolAddress, positionId);
+          const result = await cetusService.collectRewards(
+            wallet,
+            poolAddress,
+            positionId
+          );
+          if (result.digest) {
+            lastDigest = result.digest; // Store the last successful transaction digest
+          }
         } catch (error) {
           console.error(
             `Error claiming rewards for position ${positionId}:`,
@@ -268,11 +300,27 @@ function Positions() {
         }
       }
 
+      // Show success notification with transaction digest
+      if (lastDigest) {
+        setNotification({
+          visible: true,
+          message: "Successfully claimed rewards",
+          txDigest: lastDigest,
+          isSuccess: true,
+        });
+      }
+
       // Reload positions after claiming
       await reloadPositions();
     } catch (error) {
       console.error("Error claiming rewards:", error);
-      alert("Failed to claim rewards. See console for details.");
+      setNotification({
+        visible: true,
+        message: `Failed to claim rewards: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+        isSuccess: false,
+      });
     } finally {
       setClaimingPool(null);
     }
@@ -280,25 +328,39 @@ function Positions() {
 
   // Handle withdraw modal confirm
   const handleWithdrawConfirm = async () => {
-    if (!connected) return;
+    if (!connected) {
+      setNotification({
+        visible: true,
+        message: "Please connect your wallet to withdraw liquidity",
+        isSuccess: false,
+      });
+      return;
+    }
 
     try {
       setWithdrawingPool(withdrawModal.poolAddress);
+      let lastDigest = "";
+      let hasError = false;
 
       // For each position, remove liquidity
       for (const positionId of withdrawModal.positionIds) {
         try {
-          await cetusService.removeLiquidity(
+          const result = await cetusService.removeLiquidity(
             wallet,
             withdrawModal.poolAddress,
             positionId,
             100 // 100% of liquidity
           );
+
+          if (result.digest) {
+            lastDigest = result.digest; // Store the last successful transaction digest
+          }
         } catch (error) {
           console.error(
             `Error removing liquidity for position ${positionId}:`,
             error
           );
+          hasError = true;
           // Continue with next position
         }
       }
@@ -312,11 +374,29 @@ function Positions() {
         valueUsd: 0,
       });
 
+      // Show notification with transaction result
+      if (lastDigest) {
+        setNotification({
+          visible: true,
+          message: hasError
+            ? "Partially withdrew liquidity (some positions failed)"
+            : "Successfully withdrew all liquidity",
+          txDigest: lastDigest,
+          isSuccess: !hasError,
+        });
+      }
+
       // Reload positions
       await reloadPositions();
     } catch (error) {
       console.error("Error withdrawing:", error);
-      alert("Failed to withdraw. See console for details.");
+      setNotification({
+        visible: true,
+        message: `Failed to withdraw liquidity: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+        isSuccess: false,
+      });
     } finally {
       setWithdrawingPool(null);
     }
@@ -797,6 +877,16 @@ function Positions() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Transaction Notification */}
+      {notification && notification.visible && (
+        <TransactionNotification
+          message={notification.message}
+          txDigest={notification.txDigest}
+          isSuccess={notification.isSuccess}
+          onClose={handleNotificationClose}
+        />
       )}
     </div>
   );
