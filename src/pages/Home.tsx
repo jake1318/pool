@@ -1,9 +1,14 @@
+// src/pages/Home.tsx
+
 import React, { useState } from "react";
 import Pools from "./Pools";
 import Positions from "./Positions";
+import Lending from "./Lending"; // ← New import
+
+type Tab = "Pools" | "Positions" | "Lending";
 
 const Home: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<"Pools" | "Positions">("Pools");
+  const [activeTab, setActiveTab] = useState<Tab>("Pools");
 
   return (
     <div className="dashboard">
@@ -23,7 +28,14 @@ const Home: React.FC = () => {
           >
             Positions
           </button>
+          <button
+            className={`tab-button ${activeTab === "Lending" ? "active" : ""}`}
+            onClick={() => setActiveTab("Lending")}
+          >
+            Lending
+          </button>
         </div>
+
         <div className="tab-actions">
           {activeTab === "Pools" && (
             <>
@@ -41,10 +53,22 @@ const Home: React.FC = () => {
               </button>
             </>
           )}
+          {activeTab === "Lending" && (
+            <button
+              className="btn primary"
+              onClick={() => alert("Lending market refresh not implemented")}
+            >
+              Refresh Markets
+            </button>
+          )}
         </div>
       </div>
 
-      {activeTab === "Pools" ? <Pools /> : <Positions />}
+      <div className="tab-content">
+        {activeTab === "Pools" && <Pools />}
+        {activeTab === "Positions" && <Positions />}
+        {activeTab === "Lending" && <Lending />}
+      </div>
     </div>
   );
 };
