@@ -1,24 +1,30 @@
-// src/services/suilendService.ts
-// src/services/suilendService.ts
-import { JsonRpcProvider, Connection, TransactionBlock } from "@mysten/sui";
+// -----------------------------------------------------------------------------
+//  Suilend integration helper functions
+//  * compatible with @mysten/sui 1.21.x (ESM sub-paths)
+// -----------------------------------------------------------------------------
+
+import { SuiClient, getFullnodeUrl } from "@mysten/sui/client";
+import { Transaction as TransactionBlock } from "@mysten/sui/transactions";
+
 import {
   SuiLendClient,
   MarketConfig,
   ReserveData,
   UserObligationData,
 } from "@suilend/sdk";
+
 import type { Wallet } from "@suiet/wallet-kit";
 
-// ————————————————————————————————————
-//  1) Set up Sui & Suilend client
-// ————————————————————————————————————
+// -----------------------------------------------------------------------------
+//  1)  RPC + client instances
+// -----------------------------------------------------------------------------
 const rpcUrl = getFullnodeUrl("mainnet");
 const suiClient = new SuiClient({ url: rpcUrl });
 const lendClient = new SuiLendClient(suiClient);
 
-// ————————————————————————————————————
-//  2) Types for our UI layer
-// ————————————————————————————————————
+// -----------------------------------------------------------------------------
+//  2)  UI helper types
+// -----------------------------------------------------------------------------
 export interface MarketsData {
   mainMarketSummary: {
     totalDepositsUSD: number;
@@ -46,19 +52,18 @@ export interface UserObligation {
   healthFactor: number;
 }
 
-// ————————————————————————————————————
-//  3) Fetch all markets (main + isolated)
-// ————————————————————————————————————
+// -----------------------------------------------------------------------------
+//  3)  Market data
+// -----------------------------------------------------------------------------
 export async function fetchMarketsData(): Promise<MarketsData> {
-  const config: MarketConfig = await lendClient.getMarketConfig();
-  const raw = await lendClient.getAllMarkets(config);
+  const cfg: MarketConfig = await lendClient.getMarketConfig();
+  const raw = await lendClient.getAllMarkets(cfg);
 
   let totalDepositsUSD = 0;
   let totalBorrowsUSD = 0;
   const assets: MarketsData["assets"] = [];
 
-  // main market reserves
-  raw.mainMarket.reserves.forEach((r: ReserveData) => {
+  const pushReserve = (r: ReserveData, category: "main" | "isolated") => {
     assets.push({
       coinType: r.coinType,
       symbol: r.symbol,
@@ -70,31 +75,15 @@ export async function fetchMarketsData(): Promise<MarketsData> {
       borrowApr: r.borrowApy,
       ltv: r.collateralFactor,
       isBorrowable: r.canBorrow,
-      category: "main",
+      category,
     });
     totalDepositsUSD += r.totalDepositsUSD;
     totalBorrowsUSD += r.totalBorrowsUSD;
-  });
+  };
 
-  // isolated market reserves
+  raw.mainMarket.reserves.forEach((r) => pushReserve(r, "main"));
   raw.isolatedMarkets.forEach((mkt) =>
-    mkt.reserves.forEach((r: ReserveData) => {
-      assets.push({
-        coinType: r.coinType,
-        symbol: r.symbol,
-        name: r.name,
-        price: r.priceUSD,
-        totalDepositsUSD: r.totalDepositsUSD,
-        totalBorrowsUSD: r.totalBorrowsUSD,
-        depositApr: r.depositApy,
-        borrowApr: r.borrowApy,
-        ltv: r.collateralFactor,
-        isBorrowable: r.canBorrow,
-        category: "isolated",
-      });
-      totalDepositsUSD += r.totalDepositsUSD;
-      totalBorrowsUSD += r.totalBorrowsUSD;
-    })
+    mkt.reserves.forEach((r) => pushReserve(r, "isolated"))
   );
 
   return {
@@ -107,58 +96,60 @@ export async function fetchMarketsData(): Promise<MarketsData> {
   };
 }
 
-// ————————————————————————————————————
-//  4) Fetch a user’s obligation & health factor
-// ————————————————————————————————————
+// -----------------------------------------------------------------------------
+//  4)  User obligation
+// -----------------------------------------------------------------------------
 export async function fetchUserObligation(
-  userAddress: string
+  addr: string
 ): Promise<UserObligation | null> {
   const raw: UserObligationData | null = await lendClient.getUserObligation(
-    userAddress
+    addr
   );
   if (!raw) return null;
 
-  const totalBorrowUSD = raw.totalBorrowValue;
-  const borrowLimitUSD = raw.borrowLimitValue;
-  const healthFactor =
-    totalBorrowUSD > 0 ? borrowLimitUSD / totalBorrowUSD : Infinity;
-
-  return { totalBorrowUSD, borrowLimitUSD, healthFactor };
+  const { totalBorrowValue: totalBorrowUSD, borrowLimitValue: borrowLimitUSD } =
+    raw;
+  return {
+    totalBorrowUSD,
+    borrowLimitUSD,
+    healthFactor:
+      totalBorrowUSD > 0 ? borrowLimitUSD / totalBorrowUSD : Infinity,
+  };
 }
 
-// ————————————————————————————————————
-//  5) Helper: fetch on-chain wallet balance
-// ————————————————————————————————————
+// -----------------------------------------------------------------------------
+//  5)  Wallet balance for a specific coin type
+// -----------------------------------------------------------------------------
 export async function fetchWalletBalance(
-  ownerAddress: string,
+  owner: string,
   coinType: string
 ): Promise<number> {
-  const balance = await suiClient.getBalance({ owner: ownerAddress, coinType });
-  const amount = BigInt(balance.totalBalance);
+  const bal = await suiClient.getBalance({ owner, coinType });
   const reserve = await lendClient.getReserveData(coinType);
-  return Number(amount) / 10 ** reserve.decimals;
+  return Number(BigInt(bal.totalBalance)) / 10 ** reserve.decimals;
 }
 
-// ————————————————————————————————————
-//  6) Build Tx helpers
-// ————————————————————————————————————
-async function sendTx(wallet: Wallet, txb: TransactionBlock) {
-  return wallet.signAndExecuteTransactionBlock({ transactionBlock: txb });
-}
+// -----------------------------------------------------------------------------
+//  6)  Tx helpers (deposit / withdraw / borrow / repay)
+// -----------------------------------------------------------------------------
+const sendTx = (wallet: Wallet, txb: TransactionBlock) =>
+  wallet.signAndExecuteTransactionBlock({ transactionBlock: txb });
 
-export async function deposit(
-  wallet: Wallet,
+async function buildAmount(
   coinType: string,
   uiAmount: number
-) {
-  const rsv = await lendClient.getReserveData(coinType);
-  const amount = BigInt(Math.floor(uiAmount * 10 ** rsv.decimals));
+): Promise<bigint> {
+  const r = await lendClient.getReserveData(coinType);
+  return BigInt(Math.floor(uiAmount * 10 ** r.decimals));
+}
+
+export async function deposit(wallet: Wallet, coinType: string, uiAmt: number) {
   const txb = new TransactionBlock();
   await lendClient.createDepositTx({
     tx: txb,
     user: wallet.account.address,
     coinType,
-    amount,
+    amount: await buildAmount(coinType, uiAmt),
   });
   return sendTx(wallet, txb);
 }
@@ -166,50 +157,36 @@ export async function deposit(
 export async function withdraw(
   wallet: Wallet,
   coinType: string,
-  uiAmount: number
+  uiAmt: number
 ) {
-  const rsv = await lendClient.getReserveData(coinType);
-  const amount = BigInt(Math.floor(uiAmount * 10 ** rsv.decimals));
   const txb = new TransactionBlock();
   await lendClient.createWithdrawTx({
     tx: txb,
     user: wallet.account.address,
     coinType,
-    amount,
+    amount: await buildAmount(coinType, uiAmt),
   });
   return sendTx(wallet, txb);
 }
 
-export async function borrow(
-  wallet: Wallet,
-  coinType: string,
-  uiAmount: number
-) {
-  const rsv = await lendClient.getReserveData(coinType);
-  const amount = BigInt(Math.floor(uiAmount * 10 ** rsv.decimals));
+export async function borrow(wallet: Wallet, coinType: string, uiAmt: number) {
   const txb = new TransactionBlock();
   await lendClient.createBorrowTx({
     tx: txb,
     user: wallet.account.address,
     coinType,
-    amount,
+    amount: await buildAmount(coinType, uiAmt),
   });
   return sendTx(wallet, txb);
 }
 
-export async function repay(
-  wallet: Wallet,
-  coinType: string,
-  uiAmount: number
-) {
-  const rsv = await lendClient.getReserveData(coinType);
-  const amount = BigInt(Math.floor(uiAmount * 10 ** rsv.decimals));
+export async function repay(wallet: Wallet, coinType: string, uiAmt: number) {
   const txb = new TransactionBlock();
   await lendClient.createRepayTx({
     tx: txb,
     user: wallet.account.address,
     coinType,
-    amount,
+    amount: await buildAmount(coinType, uiAmt),
   });
   return sendTx(wallet, txb);
 }

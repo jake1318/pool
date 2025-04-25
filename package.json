@@ -9,13 +9,14 @@
   },
   "dependencies": {
     "@cetusprotocol/cetus-sui-clmm-sdk": "^5.3.4",
-    "@mysten/sui": "1.20.0",
+    "@mysten/sui": "1.21.2",
     "@suiet/wallet-kit": "^0.3.4",
     "@suilend/sdk": "1.1.50",
     "assert": "^2.0.0",
     "buffer": "^6.0.3",
     "crypto-browserify": "^3.12.0",
     "lodash": "^4.17.21",
+    "path-browserify": "^1.0.1",
     "process": "^0.11.10",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -23,11 +24,18 @@
     "util": "^0.12.5"
   },
   "devDependencies": {
+    "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
+    "@esbuild-plugins/node-modules-polyfill": "^0.2.2",
     "@types/react": "^18.0.28",
     "@types/react-dom": "^18.0.11",
     "@vitejs/plugin-react": "^3.1.0",
     "sass": "^1.64.0",
     "typescript": "^5.0.4",
     "vite": "^4.5.13"
+  },
+  "overrides": {
+    "@suilend/sdk": {
+      "@mysten/sui": "1.21.2"
+    }
   }
 }
