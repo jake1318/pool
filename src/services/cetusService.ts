@@ -1,4 +1,5 @@
 // src/services/cetusService.ts
+// Last Updated: 2025-04-27 02:22:05 UTC by jake1318
 
 import {
   initCetusSDK,
@@ -126,6 +127,9 @@ async function bluefinDeposit(
       `Bluefin deposit with amounts: ${amountX}(${baseAmountA}) and ${amountY}(${baseAmountB})`
     );
 
+    // Set gas budget explicitly to avoid errors
+    txb.setGasBudget(100000000); // 0.1 SUI
+
     // Call the Bluefin add_liquidity function
     txb.moveCall({
       target: `${BLUEFIN_PACKAGE}::clmm::add_liquidity`,
@@ -222,7 +226,8 @@ function extractPoolIdFromPosition(position: any): string {
 }
 
 /**
- * Open a full‑range position and deposit liquidity.
+ * Open a position and deposit liquidity.
+ * Last Updated: 2025-04-27 02:22:05 UTC by jake1318
  */
 export async function deposit(
   wallet: WalletContextState,
@@ -267,266 +272,181 @@ export async function deposit(
     console.log(`Token A (${pool.coinTypeA}): using ${decimalsA} decimals`);
     console.log(`Token B (${pool.coinTypeB}): using ${decimalsB} decimals`);
 
-    // Calculate proper tick ranges based on pool's tick spacing
+    // Calculate ticks based on pool's tick spacing
     const tickSpacing = parseInt(pool.tickSpacing);
     const currentTickIndex = parseInt(pool.current_tick_index);
 
-    // Calculate proper tick boundaries that are multiples of tickSpacing
-    // Create a position with a range that's 20 ticks on either side of the current tick
-    const lowerTickIndex =
-      Math.floor((currentTickIndex - tickSpacing * 20) / tickSpacing) *
-      tickSpacing;
-    const upperTickIndex =
-      Math.ceil((currentTickIndex + tickSpacing * 20) / tickSpacing) *
-      tickSpacing;
-
-    console.log(
-      `Creating position with tick range: ${lowerTickIndex} to ${upperTickIndex}`
-    );
-    console.log(
-      `Pool details: tickSpacing=${tickSpacing}, currentTick=${currentTickIndex}`
+    // Calculate tick boundaries using the SDK's helper functions
+    // Use a moderate tick range for good price coverage
+    const lowerTick = TickMath.getPrevInitializableTickIndex(
+      currentTickIndex - tickSpacing * 8, // 8 ticks below current
+      tickSpacing
     );
 
-    // Convert amounts to base units (smallest denomination)
-    const baseAmountA = toBaseUnit(amountX, decimalsA);
-    const baseAmountB = toBaseUnit(amountY, decimalsB);
-
-    console.log(
-      `Converting amounts: ${amountX} -> ${baseAmountA}, ${amountY} -> ${baseAmountB}`
+    const upperTick = TickMath.getNextInitializableTickIndex(
+      currentTickIndex + tickSpacing * 8, // 8 ticks above current
+      tickSpacing
     );
 
-    // Step 1: Create position
-    console.log("Step 1: Creating position");
-    const openPositionTx = await sdk.Position.openPositionTransactionPayload({
+    console.log(
+      `Creating position with tick range: ${lowerTick} to ${upperTick}`
+    );
+    console.log(
+      `Pool details: tickSpacing=${tickSpacing}, currentTick=${currentTickIndex}, currentSqrtPrice=${pool.current_sqrt_price}`
+    );
+
+    // Convert to base units (smallest denomination) using 100% of the amount
+    const baseAmountA = toBaseUnit(amountX, decimalsA); // Use full amount
+    const baseAmountB = toBaseUnit(amountY, decimalsB); // Use full amount
+
+    console.log(
+      `Using full amounts: ${baseAmountA} (TokenA), ${baseAmountB} (TokenB)`
+    );
+
+    // Get current sqrt price as BN
+    const curSqrtPrice = new BN(pool.current_sqrt_price);
+
+    // Calculate amounts based on pool price to ensure they're balanced
+    const bnAmountA = new BN(baseAmountA);
+    const bnAmountB = new BN(baseAmountB);
+
+    // Check if we're using SUI, which needs special handling for gas
+    const isSUITokenA = pool.coinTypeA.includes("sui::SUI");
+    const isSUITokenB = pool.coinTypeB.includes("sui::SUI");
+
+    // If SUI is involved, reserve some for gas
+    if (isSUITokenA || isSUITokenB) {
+      // Reserve 0.05 SUI for gas
+      const gasReserveInSui = new BN(50000000); // 0.05 SUI
+
+      if (isSUITokenA) {
+        // Get total SUI balance
+        const suiBalance = await sdk.fullClient
+          .getBalance({
+            owner: address,
+            coinType: "0x2::sui::SUI",
+          })
+          .then((res) => new BN(res.totalBalance));
+
+        // Ensure we leave gas reserve
+        if (bnAmountA.add(gasReserveInSui).gt(suiBalance)) {
+          const availableForLiquidity = suiBalance.sub(gasReserveInSui);
+          console.log(
+            `Adjusting SUI amount to leave gas reserve, from ${bnAmountA.toString()} to ${availableForLiquidity.toString()}`
+          );
+          bnAmountA.iaddn(0).iadd(availableForLiquidity);
+        }
+      } else if (isSUITokenB) {
+        // Get total SUI balance
+        const suiBalance = await sdk.fullClient
+          .getBalance({
+            owner: address,
+            coinType: "0x2::sui::SUI",
+          })
+          .then((res) => new BN(res.totalBalance));
+
+        // Ensure we leave gas reserve
+        if (bnAmountB.add(gasReserveInSui).gt(suiBalance)) {
+          const availableForLiquidity = suiBalance.sub(gasReserveInSui);
+          console.log(
+            `Adjusting SUI amount to leave gas reserve, from ${bnAmountB.toString()} to ${availableForLiquidity.toString()}`
+          );
+          bnAmountB.iaddn(0).iadd(availableForLiquidity);
+        }
+      }
+    }
+
+    // Set the fixed amount flag based on which token is SUI
+    // If SUI is involved, we want to fix the other token to ensure we have enough SUI for gas
+    const fixAmountA = !isSUITokenA || (isSUITokenB && !isSUITokenA);
+
+    // Reasonable slippage tolerance
+    const slippage = 0.05; // 5% slippage is more reasonable for a full amount deposit
+
+    console.log(
+      `Using combined open position and add liquidity approach with fixed amount ${
+        fixAmountA ? "A" : "B"
+      }`
+    );
+
+    // === Combined open position and add liquidity in one transaction ===
+    console.log("Using the combined open position and add liquidity approach");
+
+    const addLiquidityParams = {
       coinTypeA: pool.coinTypeA,
       coinTypeB: pool.coinTypeB,
       pool_id: poolId,
-      tick_lower: lowerTickIndex.toString(),
-      tick_upper: upperTickIndex.toString(),
-    });
+      tick_lower: lowerTick.toString(),
+      tick_upper: upperTick.toString(),
+      fix_amount_a: fixAmountA,
+      amount_a: bnAmountA.toString(),
+      amount_b: bnAmountB.toString(),
+      slippage,
+      is_open: true, // This is key - open position and add liquidity in one tx
+      rewarder_coin_types: [],
+      collect_fee: false,
+      pos_id: "", // Empty since we're creating a new position
+    };
 
-    console.log("Sending position creation transaction");
-    const openPositionRes = await wallet.signAndExecuteTransactionBlock({
-      transactionBlock: openPositionTx,
+    console.log("Add liquidity parameters:", addLiquidityParams);
+
+    // Create the transaction with fixed token approach
+    const tx = await sdk.Position.createAddLiquidityFixTokenPayload(
+      addLiquidityParams,
+      {
+        slippage,
+        curSqrtPrice,
+      }
+    );
+
+    // Set adequate gas budget - slightly higher for full amount transactions
+    tx.setGasBudget(110000000); // 0.11 SUI
+
+    console.log("Sending combined transaction");
+    const res = await wallet.signAndExecuteTransactionBlock({
+      transactionBlock: tx,
       options: {
         showEffects: true,
         showEvents: true,
         showObjectChanges: true,
       },
     });
-    console.log("Transaction completed, response:", openPositionRes);
 
-    // If we only got a digest, try to fetch the full transaction
-    if (
-      openPositionRes.digest &&
-      (!openPositionRes.events || openPositionRes.events.length === 0)
-    ) {
-      console.log(
-        "Only received transaction digest, fetching transaction details"
-      );
-      try {
-        // Wait a moment for transaction to be fully processed
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+    console.log("Transaction completed successfully");
+    console.log("Transaction digest:", res.digest);
 
-        // Fetch transaction details using SDK
-        const txDetails = await sdk.fullClient.getTransactionBlock({
-          digest: openPositionRes.digest,
-          options: {
-            showEvents: true,
-            showEffects: true,
-            showObjectChanges: true,
-            showInput: true,
-          },
-        });
-
-        console.log("Fetched transaction details:", txDetails);
-
-        // Merge transaction details into our response
-        if (txDetails.events) openPositionRes.events = txDetails.events;
-        if (txDetails.effects)
-          (openPositionRes as any).effects = txDetails.effects;
-        if (txDetails.objectChanges)
-          openPositionRes.objectChanges = txDetails.objectChanges;
-
-        console.log("Updated transaction response:", openPositionRes);
-      } catch (error) {
-        console.error("Error fetching transaction details:", error);
-      }
-    }
-
-    // Extract position id with enhanced logging and error handling
-    let positionId = null;
-
-    // Look at all effects changes - specifically created objects
-    if (
-      (openPositionRes as any).effects &&
-      (openPositionRes as any).effects.created
-    ) {
-      console.log(
-        "Looking through created objects in effects:",
-        (openPositionRes as any).effects.created
-      );
-
-      // Find position NFT among created objects
-      const createdObjects = (openPositionRes as any).effects.created;
-      for (const obj of createdObjects) {
-        console.log("Checking created object:", obj);
-        if (obj.owner && obj.owner.AddressOwner === address) {
-          console.log("Found object owned by caller:", obj);
-          positionId = obj.reference.objectId;
-          console.log(`Found position ID: ${positionId}`);
-          break;
-        }
-      }
-    }
-
-    // If not found in effects, try object changes
-    if (!positionId && openPositionRes.objectChanges) {
-      console.log(
-        "Looking through object changes:",
-        openPositionRes.objectChanges
-      );
-
-      // Find objects created in this transaction
-      const createdObjects = openPositionRes.objectChanges.filter(
-        (change) => change.type === "created" || change.type === "published"
-      );
-
-      console.log("Created objects:", createdObjects);
-
-      // Find position NFT among created objects (owned by address)
-      for (const obj of createdObjects) {
-        if (obj.owner && obj.owner === address) {
-          positionId = obj.objectId;
-          console.log(`Found position ID: ${positionId}`);
-          break;
-        }
-      }
-
-      // If no owner match, use first created object as fallback
-      if (!positionId && createdObjects.length > 0) {
-        positionId = createdObjects[0].objectId;
-        console.log(`Using first created object as position ID: ${positionId}`);
-      }
-    }
-
-    // Check events as a last resort
-    if (
-      !positionId &&
-      openPositionRes.events &&
-      openPositionRes.events.length > 0
-    ) {
-      console.log("Looking through events:", openPositionRes.events);
-
-      // Try to find position events
-      const positionEventPatterns = [
-        "::PositionCreated",
-        "::PositionOpened",
-        "::position::PositionCreated",
-        "::position::PositionOpened",
-        "::clmm::position::PositionCreated",
-        "::clmm::position::PositionOpened",
-      ];
-
-      for (const pattern of positionEventPatterns) {
-        const evt = openPositionRes.events.find((e) =>
-          e.type.endsWith(pattern)
-        );
-        if (evt && evt.parsedJson) {
-          console.log(`Found event matching ${pattern}:`, evt.parsedJson);
-
-          // Try various field names for position id
-          const possibleIdFields = [
-            "position_id",
-            "pos_id",
-            "positionId",
-            "id",
-            "nft_id",
-          ];
-          for (const field of possibleIdFields) {
-            const id = (evt.parsedJson as any)[field];
-            if (id) {
-              console.log(`Found position ID in field ${field}: ${id}`);
-              positionId = id;
-              break;
-            }
-          }
-
-          if (positionId) break;
-        }
-      }
-    }
-
-    if (!positionId) {
-      console.error(
-        "Transaction successful but could not extract position ID from response"
-      );
-      console.error("Full response:", JSON.stringify(openPositionRes, null, 2));
-      throw new Error("Failed to extract position ID");
-    }
-
-    console.log(`Successfully extracted position ID: ${positionId}`);
-
-    // Step 2: Add liquidity to the position
-    console.log("Step 2: Adding liquidity to position");
-
-    // Wait a moment before adding liquidity to ensure position is fully created
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    // Then add liquidity using createAddLiquidityFixTokenPayload
-    // Make sure to use the same tick values as when creating the position
-    const addLiquidityParams = {
-      coinTypeA: pool.coinTypeA,
-      coinTypeB: pool.coinTypeB,
-      pool_id: poolId,
-      tick_lower: lowerTickIndex.toString(),
-      tick_upper: upperTickIndex.toString(),
-      fix_amount_a: false, // Fix amount B instead of A
-      amount_a: baseAmountA,
-      amount_b: baseAmountB,
-      slippage: 0.05, // 5% slippage
-      is_open: false, // Already opened the position
-      rewarder_coin_types: [],
-      collect_fee: false,
-      pos_id: positionId,
-    };
-
-    console.log("Adding liquidity with params:", addLiquidityParams);
-    const addLiquidityTx = await sdk.Position.createAddLiquidityFixTokenPayload(
-      addLiquidityParams,
-      {
-        slippage: 0.05, // 5% slippage
-        curSqrtPrice: pool.current_sqrt_price,
-      }
-    );
-
-    console.log("Sending add liquidity transaction");
-    const addLiquidityRes = await wallet.signAndExecuteTransactionBlock({
-      transactionBlock: addLiquidityTx,
-      options: {
-        showEffects: true,
-        showEvents: true,
-        showInput: true,
-      },
-    });
-    console.log("Liquidity addition successful");
-
-    // Return the transaction result with digest
     return {
       success: true,
-      digest: addLiquidityRes.digest || "",
+      digest: res.digest || "",
     };
   } catch (error) {
     console.error("Error in deposit function:", error);
 
-    // Provide more specific error messages
+    // Provide user-friendly error messages
     if (error instanceof Error) {
-      if (
-        error.message.includes("Cannot read properties") &&
-        error.message.includes("fields")
+      // Check for specific error patterns
+      if (error.message.includes("Insufficient balance")) {
+        throw new Error(
+          "Insufficient balance to complete the transaction. Please check your token balances."
+        );
+      } else if (
+        error.message.includes("MoveAbort") &&
+        error.message.includes("repay_add_liquidity")
       ) {
         throw new Error(
-          "This pool type is not supported yet or requires a different implementation"
+          "Transaction failed: The amounts need to be balanced according to the pool's current price ratio. Try adjusting your token amounts."
+        );
+      } else if (error.message.includes("Could not find gas coin")) {
+        throw new Error(
+          "Not enough SUI to cover gas fees. Please add more SUI to your wallet."
+        );
+      } else if (error.message.includes("budget")) {
+        throw new Error(
+          "Transaction failed due to gas budget issues. Please try again with different amounts."
+        );
+      } else if (error.message.includes("Failed to find position ID")) {
+        throw new Error(
+          "Position was created but we couldn't identify it. Please check your positions in Cetus app."
         );
       }
     }
@@ -537,6 +457,7 @@ export async function deposit(
 
 /**
  * Remove a percentage (0–100) of liquidity from a position, collecting fees.
+ * Last Updated: 2025-04-27 02:22:05 UTC by jake1318
  */
 export async function removeLiquidity(
   wallet: WalletContextState,
@@ -550,70 +471,109 @@ export async function removeLiquidity(
   const address = wallet.account.address;
   const sdk = getSdkWithWallet(address);
 
-  // 1) Fetch on‐chain position fields
-  const pos = await fetchPositionFields(sdk, positionId);
-  if (!pos.liquidity || pos.liquidity === "0") {
-    throw new Error("Position has zero liquidity");
+  try {
+    console.log(
+      `Removing ${liquidityPct}% liquidity from position ${positionId} in pool ${poolId}`
+    );
+
+    // Try to fetch position data
+    let pos;
+    try {
+      pos = await fetchPositionFields(sdk, positionId);
+      if (!pos.liquidity || pos.liquidity === "0") {
+        throw new Error("Position has zero liquidity");
+      }
+    } catch (error) {
+      console.warn("Could not fetch position details:", error);
+      throw new Error("Position not found or has no liquidity");
+    }
+
+    // Resolve actual pool ID
+    const actualPoolId = pos.pool_id || pos.pool || poolId;
+    if (!actualPoolId) {
+      throw new Error("Cannot find pool_id for this position");
+    }
+
+    // Fetch on‐chain pool
+    const pool = await sdk.Pool.getPool(actualPoolId);
+    if (!pool) throw new Error(`Pool ${actualPoolId} not found`);
+
+    // Compute removal amount
+    const totalLiq = new BN(pos.liquidity);
+    const removeLiq = totalLiq.muln(liquidityPct).divn(100);
+
+    // Compute min amounts with slippage
+    const lowerSqrt = TickMath.tickIndexToSqrtPriceX64(pos.tick_lower_index);
+    const upperSqrt = TickMath.tickIndexToSqrtPriceX64(pos.tick_upper_index);
+    const curSqrt = new BN(pool.current_sqrt_price);
+
+    const coinAmounts = ClmmPoolUtil.getCoinAmountFromLiquidity(
+      removeLiq,
+      curSqrt,
+      lowerSqrt,
+      upperSqrt,
+      false
+    );
+    const slippageTol = new Percentage(new BN(5), new BN(100));
+    const { tokenMaxA, tokenMaxB } = adjustForCoinSlippage(
+      coinAmounts,
+      slippageTol,
+      false
+    );
+
+    // Build & execute tx with pos_id (not position_id!)
+    const tx = await sdk.Position.removeLiquidityTransactionPayload({
+      coinTypeA: pool.coinTypeA,
+      coinTypeB: pool.coinTypeB,
+      pool_id: actualPoolId,
+      pos_id: positionId, // <-- use pos_id
+      delta_liquidity: removeLiq.toString(),
+      min_amount_a: tokenMaxA.toString(),
+      min_amount_b: tokenMaxB.toString(),
+      collect_fee: true,
+      rewarder_coin_types: [], // <-- explicitly pass empty array
+    });
+
+    // Set explicit gas budget
+    tx.setGasBudget(100000000); // 0.1 SUI
+
+    console.log("Executing remove liquidity transaction");
+    const res = await wallet.signAndExecuteTransactionBlock({
+      transactionBlock: tx,
+      options: { showEvents: true, showEffects: true },
+    });
+
+    console.log("Liquidity removal successful:", res.digest);
+
+    return {
+      success: true,
+      digest: res.digest || "",
+    };
+  } catch (error) {
+    console.error("Error in removeLiquidity:", error);
+
+    // Provide helpful error messages
+    if (error instanceof Error) {
+      const errorMessage = error.message.toLowerCase();
+      if (
+        errorMessage.includes("insufficient") ||
+        errorMessage.includes("balance")
+      ) {
+        throw new Error("Insufficient balance to complete the transaction");
+      } else if (errorMessage.includes("not found")) {
+        throw new Error(
+          "Position or pool not found. It may have been closed already."
+        );
+      }
+    }
+
+    throw error;
   }
-
-  // 2) Resolve actual pool ID
-  const actualPoolId = pos.pool_id || pos.pool || poolId;
-  if (!actualPoolId) {
-    throw new Error("Cannot find pool_id for this position");
-  }
-
-  // 3) Fetch on‐chain pool
-  const pool = await sdk.Pool.getPool(actualPoolId);
-  if (!pool) throw new Error(`Pool ${actualPoolId} not found`);
-
-  // 4) Compute removal amount
-  const totalLiq = new BN(pos.liquidity);
-  const removeLiq = totalLiq.muln(liquidityPct).divn(100);
-
-  // 5) Compute min amounts with slippage
-  const lowerSqrt = TickMath.tickIndexToSqrtPriceX64(pos.tick_lower_index);
-  const upperSqrt = TickMath.tickIndexToSqrtPriceX64(pos.tick_upper_index);
-  const curSqrt = new BN(pool.current_sqrt_price);
-
-  const coinAmounts = ClmmPoolUtil.getCoinAmountFromLiquidity(
-    removeLiq,
-    curSqrt,
-    lowerSqrt,
-    upperSqrt,
-    false
-  );
-  const slippageTol = new Percentage(new BN(5), new BN(100));
-  const { tokenMaxA, tokenMaxB } = adjustForCoinSlippage(
-    coinAmounts,
-    slippageTol,
-    false
-  );
-
-  // 6) Build & execute tx with pos_id (not position_id!)
-  const tx = await sdk.Position.removeLiquidityTransactionPayload({
-    coinTypeA: pool.coinTypeA,
-    coinTypeB: pool.coinTypeB,
-    pool_id: actualPoolId,
-    pos_id: positionId, // <-- use pos_id
-    delta_liquidity: removeLiq.toString(),
-    min_amount_a: tokenMaxA.toString(),
-    min_amount_b: tokenMaxB.toString(),
-    collect_fee: true,
-    rewarder_coin_types: [], // <-- explicitly pass empty array
-  });
-  const res = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
-    options: { showEvents: true, showEffects: true },
-  });
-
-  return {
-    success: true,
-    digest: res.digest || "",
-  };
 }
 
 /**
  * Withdraw all liquidity, fees and rewards, and close the position.
+ * Last Updated: 2025-04-27 02:22:05 UTC by jake1318
  */
 export async function closePosition(
   wallet: WalletContextState,
@@ -626,71 +586,276 @@ export async function closePosition(
   const address = wallet.account.address;
   const sdk = getSdkWithWallet(address);
 
-  // Fetch pos & pool
-  const pos = await fetchPositionFields(sdk, positionId);
-  const actualPoolId = pos.pool_id || pos.pool || poolId;
-  const pool = await sdk.Pool.getPool(actualPoolId);
-  if (!pool) throw new Error(`Pool ${actualPoolId} not found`);
-
-  // Compute slippage amounts
-  const totalLiq = new BN(pos.liquidity || "0");
-  const lowerSqrt = TickMath.tickIndexToSqrtPriceX64(pos.tick_lower_index);
-  const upperSqrt = TickMath.tickIndexToSqrtPriceX64(pos.tick_upper_index);
-  const curSqrt = new BN(pool.current_sqrt_price);
-  const coinAmounts = totalLiq.isZero()
-    ? { amountA: new BN(0), amountB: new BN(0) }
-    : ClmmPoolUtil.getCoinAmountFromLiquidity(
-        totalLiq,
-        curSqrt,
-        lowerSqrt,
-        upperSqrt,
-        false
-      );
-  const slippageTol = new Percentage(new BN(5), new BN(100));
-  const { tokenMaxA, tokenMaxB } = adjustForCoinSlippage(
-    coinAmounts,
-    slippageTol,
-    false
-  );
-
-  // Gather rewards owed
-  let rewarderCoinTypes: string[] = [];
   try {
-    const rewards = await sdk.Rewarder.posRewardersAmount(
-      actualPoolId,
-      pool.positions_handle,
-      positionId
-    );
-    rewarderCoinTypes = rewards
-      .filter((r: any) => Number(r.amount_owed) > 0)
-      .map((r: any) => r.coin_address);
-  } catch {
-    //
+    console.log(`Closing position ${positionId} in pool ${poolId}`);
+
+    // Step 1: Check if the position exists
+    let pos;
+    let positionExists = true;
+    try {
+      // Try to get the object directly using the SUI client
+      const resp = await sdk.fullClient.getObject({
+        id: positionId,
+        options: { showContent: true, showDisplay: true },
+      });
+
+      positionExists = resp.data !== null && resp.data !== undefined;
+      if (!positionExists) {
+        console.log(`Position ${positionId} does not exist, returning success`);
+        return {
+          success: true,
+          digest: "",
+        };
+      }
+
+      // Get position data
+      try {
+        pos = await fetchPositionFields(sdk, positionId);
+        console.log(`Position data fetched:`, pos);
+      } catch (error) {
+        console.warn("Could not fetch position details:", error);
+        // If we can't get details but position exists, continue with defaults
+      }
+    } catch (error) {
+      console.warn("Error checking position existence:", error);
+      // If we can't determine, assume it exists and continue
+    }
+
+    // Step 2: Get pool info - required for all operations
+    let pool;
+    try {
+      pool = await sdk.Pool.getPool(poolId);
+      if (!pool) {
+        throw new Error(`Pool ${poolId} not found`);
+      }
+      console.log("Found pool:", poolId);
+    } catch (error) {
+      console.error("Error fetching pool:", error);
+      throw new Error(`Pool not found: ${poolId}`);
+    }
+
+    // Use either the actual pool ID from position or the provided one
+    const actualPoolId = pos?.pool_id || pos?.pool || poolId;
+
+    // Step 3: First check if the position has liquidity
+    let hasLiquidity = false;
+    let liquidity = new BN(0);
+
+    if (pos && pos.liquidity) {
+      liquidity = new BN(pos.liquidity);
+      hasLiquidity = !liquidity.isZero();
+    }
+
+    // If the position has liquidity, we need to remove it first
+    if (hasLiquidity) {
+      console.log(
+        `Position has ${liquidity.toString()} liquidity - removing it first`
+      );
+
+      try {
+        // Calculate tick boundaries and current price info
+        const lowerSqrt = TickMath.tickIndexToSqrtPriceX64(
+          pos.tick_lower_index
+        );
+        const upperSqrt = TickMath.tickIndexToSqrtPriceX64(
+          pos.tick_upper_index
+        );
+        const curSqrt = new BN(pool.current_sqrt_price);
+
+        // Calculate expected token amounts
+        const coinAmounts = ClmmPoolUtil.getCoinAmountFromLiquidity(
+          liquidity,
+          curSqrt,
+          lowerSqrt,
+          upperSqrt,
+          false
+        );
+
+        // Apply slippage tolerance
+        const slippageTol = new Percentage(new BN(5), new BN(100));
+        const { tokenMaxA, tokenMaxB } = adjustForCoinSlippage(
+          coinAmounts,
+          slippageTol,
+          false
+        );
+
+        // Create remove liquidity transaction
+        console.log("Creating remove liquidity transaction");
+        const removeLiquidityParams = {
+          coinTypeA: pool.coinTypeA,
+          coinTypeB: pool.coinTypeB,
+          pool_id: actualPoolId,
+          pos_id: positionId,
+          delta_liquidity: liquidity.toString(),
+          min_amount_a: tokenMaxA.toString(),
+          min_amount_b: tokenMaxB.toString(),
+          collect_fee: true, // Collect fees during removal
+          rewarder_coin_types: [], // We'll handle rewards separately if needed
+        };
+
+        const removeLiquidityTx =
+          await sdk.Position.removeLiquidityTransactionPayload(
+            removeLiquidityParams
+          );
+        removeLiquidityTx.setGasBudget(100000000); // 0.1 SUI
+
+        console.log("Executing remove liquidity transaction");
+        const removeLiquidityResult =
+          await wallet.signAndExecuteTransactionBlock({
+            transactionBlock: removeLiquidityTx,
+            options: { showEvents: true, showEffects: true },
+          });
+
+        console.log(
+          "Liquidity removal successful:",
+          removeLiquidityResult.digest
+        );
+
+        // Add a small delay to ensure blockchain state is updated
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      } catch (error) {
+        console.error("Error removing liquidity:", error);
+        // Don't rethrow, try to continue with closing if possible
+      }
+    } else {
+      console.log("Position has no liquidity, proceeding to close position");
+    }
+
+    // Step 4: Now close the position
+    console.log("Creating close position transaction");
+    let closeTx;
+    try {
+      // Get rewards owed - but handle errors gracefully
+      let rewarderCoinTypes: string[] = [];
+      try {
+        if (
+          pool.positions_handle &&
+          typeof sdk.Rewarder?.posRewardersAmount === "function"
+        ) {
+          const rewards = await sdk.Rewarder.posRewardersAmount(
+            actualPoolId,
+            pool.positions_handle,
+            positionId
+          );
+
+          rewarderCoinTypes = rewards
+            .filter((r: any) => r && Number(r.amount_owed) > 0)
+            .map((r: any) => r.coin_address);
+
+          console.log(
+            `Found ${rewarderCoinTypes.length} reward types with non-zero amounts`
+          );
+        }
+      } catch (error) {
+        console.warn(
+          "Could not fetch rewards, proceeding without them:",
+          error
+        );
+      }
+
+      // Now close the position
+      try {
+        closeTx = await sdk.Position.closePositionTransactionPayload({
+          coinTypeA: pool.coinTypeA,
+          coinTypeB: pool.coinTypeB,
+          pool_id: actualPoolId,
+          pos_id: positionId,
+          min_amount_a: "0", // There should be no liquidity left
+          min_amount_b: "0", // There should be no liquidity left
+          rewarder_coin_types: rewarderCoinTypes,
+        });
+      } catch (error) {
+        console.warn("SDK close position failed, using fallback:", error);
+
+        // Create transaction manually as a fallback
+        const txb = new TransactionBlock();
+
+        // Try calling through the pool_script module, which might handle certain edge cases better
+        txb.moveCall({
+          target: `${sdk.sdkOptions.cetusModule.clmmIntegrate}::pool_script::close_position`,
+          arguments: [
+            txb.object(sdk.sdkOptions.cetusModule.config),
+            txb.object(actualPoolId),
+            txb.object(positionId),
+            txb.pure("0"), // min_amount_a
+            txb.pure("0"), // min_amount_b
+            txb.object(sdk.sdkOptions.cetusModule.clock),
+          ],
+          typeArguments: [pool.coinTypeA, pool.coinTypeB],
+        });
+
+        closeTx = txb;
+      }
+    } catch (error) {
+      console.error("Failed to create close position transaction:", error);
+      throw new Error("Failed to create transaction for closing position.");
+    }
+
+    // Set explicit gas budget
+    if (closeTx && typeof closeTx.setGasBudget === "function") {
+      closeTx.setGasBudget(100000000); // 0.1 SUI
+    }
+
+    // Execute transaction to close the position
+    console.log("Executing close position transaction");
+    const closeResult = await wallet.signAndExecuteTransactionBlock({
+      transactionBlock: closeTx,
+      options: { showEvents: true, showEffects: true },
+    });
+
+    // Check if transaction succeeded
+    if (closeResult.effects?.status?.status === "failure") {
+      console.error(
+        "Close position transaction failed:",
+        closeResult.effects.status.error
+      );
+      if (
+        closeResult.effects.status.error.includes("MoveAbort") &&
+        closeResult.effects.status.error.includes("7")
+      ) {
+        console.log(
+          "Position likely already closed or has remaining liquidity"
+        );
+      } else {
+        throw new Error(
+          `Failed to close position: ${closeResult.effects.status.error}`
+        );
+      }
+    } else {
+      console.log("Close position transaction successful:", closeResult.digest);
+    }
+
+    return {
+      success: true,
+      digest: closeResult.digest || "",
+    };
+  } catch (error) {
+    console.error("Error in closePosition:", error);
+
+    // Check if this is a "position already closed" error, which we can ignore
+    if (error instanceof Error) {
+      const errorMessage = error.message.toLowerCase();
+
+      if (
+        errorMessage.includes("not found") ||
+        errorMessage.includes("already closed") ||
+        (errorMessage.includes("moveabort") && errorMessage.includes("7"))
+      ) {
+        console.log("Position may have already been closed");
+        return {
+          success: true,
+          digest: "",
+        };
+      }
+    }
+
+    throw error;
   }
-
-  // Build & execute
-  const tx = await sdk.Position.closePositionTransactionPayload({
-    coinTypeA: pool.coinTypeA,
-    coinTypeB: pool.coinTypeB,
-    pool_id: actualPoolId,
-    pos_id: positionId,
-    min_amount_a: tokenMaxA.toString(),
-    min_amount_b: tokenMaxB.toString(),
-    rewarder_coin_types: rewarderCoinTypes,
-  });
-  const res = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
-    options: { showEvents: true, showEffects: true },
-  });
-
-  return {
-    success: true,
-    digest: res.digest || "",
-  };
 }
 
 /**
  * Collect fees from a position.
+ * Last Updated: 2025-04-27 02:22:05 UTC by jake1318
  */
 export async function collectFees(
   wallet: WalletContextState,
@@ -703,35 +868,129 @@ export async function collectFees(
   const address = wallet.account.address;
   const sdk = getSdkWithWallet(address);
 
-  // Verify existence
-  await fetchPositionFields(sdk, positionId);
+  try {
+    console.log(
+      `Collecting fees for position: ${positionId} in pool: ${poolId}`
+    );
 
-  // On‐chain pool
-  const pool = await sdk.Pool.getPool(poolId);
-  if (!pool) throw new Error(`Pool ${poolId} not found`);
+    // Verify position exists
+    let pos;
+    try {
+      pos = await fetchPositionFields(sdk, positionId);
+      if (!pos) {
+        throw new Error(`Position ${positionId} not found`);
+      }
+    } catch (error) {
+      console.error("Error verifying position:", error);
+      throw new Error(`Position verification failed: ${positionId}`);
+    }
 
-  const tx = await sdk.Position.collectFeeTransactionPayload(
-    {
-      coinTypeA: pool.coinTypeA,
-      coinTypeB: pool.coinTypeB,
-      pool_id: poolId,
-      pos_id: positionId,
-    },
-    true
-  );
-  const res = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
-    options: { showEvents: true, showEffects: true },
-  });
+    // Get on-chain pool
+    let pool;
+    try {
+      pool = await sdk.Pool.getPool(poolId);
+      if (!pool) {
+        throw new Error(`Pool ${poolId} not found`);
+      }
+      console.log("Found pool:", poolId);
+    } catch (error) {
+      console.error("Error fetching pool:", error);
+      throw new Error(`Pool not found: ${poolId}`);
+    }
 
-  return {
-    success: true,
-    digest: res.digest || "",
-  };
+    // Create transaction payload
+    let tx;
+    try {
+      // Try the SDK method first
+      tx = await sdk.Position.collectFeeTransactionPayload(
+        {
+          coinTypeA: pool.coinTypeA,
+          coinTypeB: pool.coinTypeB,
+          pool_id: poolId,
+          pos_id: positionId,
+        },
+        true // immutable flag
+      );
+    } catch (error) {
+      console.error("SDK collect fee transaction creation failed:", error);
+
+      // If we get the "tx.object is not a function" error, use a fallback approach
+      if (
+        error instanceof TypeError &&
+        error.message.includes("not a function")
+      ) {
+        console.log(
+          "Using fallback direct transaction block for fee collection"
+        );
+
+        // Create transaction block manually
+        const txb = new TransactionBlock();
+
+        // Create move call directly
+        txb.moveCall({
+          target: `${sdk.sdkOptions.cetusModule.clmm}::position::collect_fee`,
+          arguments: [
+            txb.object(poolId),
+            txb.object(positionId),
+            txb.object(sdk.sdkOptions.cetusModule.config),
+            txb.pure(true), // is_immutable
+          ],
+          typeArguments: [pool.coinTypeA, pool.coinTypeB],
+        });
+
+        tx = txb;
+      } else {
+        // Re-throw the error if it's not one we can handle
+        throw error;
+      }
+    }
+
+    // Set gas budget if the transaction supports it
+    if (typeof tx.setGasBudget === "function") {
+      tx.setGasBudget(50000000); // 0.05 SUI
+    }
+
+    // Execute transaction
+    console.log("Executing fee collection transaction");
+    const res = await wallet.signAndExecuteTransactionBlock({
+      transactionBlock: tx,
+      options: { showEvents: true, showEffects: true },
+    });
+
+    console.log("Fee collection transaction successful:", res.digest);
+
+    return {
+      success: true,
+      digest: res.digest || "",
+    };
+  } catch (error) {
+    console.error("Fee collection failed:", error);
+
+    // Provide user-friendly error messages
+    if (error instanceof Error) {
+      const errorMsg = error.message.toLowerCase();
+      if (
+        errorMsg.includes("insufficient balance") ||
+        errorMsg.includes("coin balance")
+      ) {
+        throw new Error("Insufficient balance to complete the transaction.");
+      } else if (errorMsg.includes("gas") || errorMsg.includes("budget")) {
+        throw new Error("Gas budget error. Please try again later.");
+      } else if (
+        errorMsg.includes("position") &&
+        errorMsg.includes("not found")
+      ) {
+        throw new Error("Position no longer exists or has been closed.");
+      }
+    }
+
+    throw error;
+  }
 }
 
 /**
  * Collect rewards from a position.
+ * Last Updated: 2025-04-27 02:22:05 UTC by jake1318
  */
 export async function collectRewards(
   wallet: WalletContextState,
@@ -744,51 +1003,104 @@ export async function collectRewards(
   const address = wallet.account.address;
   const sdk = getSdkWithWallet(address);
 
-  // Verify existence
-  await fetchPositionFields(sdk, positionId);
+  try {
+    console.log(
+      `Attempting to collect rewards for position ${positionId} in pool ${poolId}`
+    );
 
-  // On‐chain pool
-  const pool = await sdk.Pool.getPool(poolId);
-  if (!pool) throw new Error(`Pool ${poolId} not found`);
+    // Verify position exists
+    let pos;
+    try {
+      pos = await fetchPositionFields(sdk, positionId);
+      if (!pos) {
+        throw new Error(`Position ${positionId} not found`);
+      }
+    } catch (error) {
+      console.error("Error verifying position:", error);
+      throw new Error(`Position verification failed: ${positionId}`);
+    }
 
-  // Owed rewarders
-  const rewards = await sdk.Rewarder.posRewardersAmount(
-    poolId,
-    pool.positions_handle,
-    positionId
-  );
-  const rewarderCoinTypes = rewards
-    .filter((r: any) => Number(r.amount_owed) > 0)
-    .map((r: any) => r.coin_address);
-  if (!rewarderCoinTypes.length) {
-    console.log("No rewards owed");
-    return {
-      success: true,
-      digest: "",
-    };
+    // Get on-chain pool
+    let pool;
+    try {
+      pool = await sdk.Pool.getPool(poolId);
+      if (!pool) {
+        throw new Error(`Pool ${poolId} not found`);
+      }
+      console.log("Found pool:", poolId);
+      console.log("Pool positions handle:", pool.positions_handle);
+    } catch (error) {
+      console.error("Error fetching pool:", error);
+      throw new Error(`Pool not found: ${poolId}`);
+    }
+
+    // Check for rewards
+    let rewarderCoinTypes = [];
+    try {
+      const rewards = await sdk.Rewarder.posRewardersAmount(
+        poolId,
+        pool.positions_handle,
+        positionId
+      );
+
+      rewarderCoinTypes = rewards
+        .filter((r: any) => r && Number(r.amount_owed) > 0)
+        .map((r: any) => r.coin_address);
+
+      console.log(
+        `Found ${rewarderCoinTypes.length} reward types with non-zero amounts`
+      );
+    } catch (error) {
+      console.error("Error checking rewards:", error);
+      throw new Error("Failed to check rewards. Please try again.");
+    }
+
+    if (rewarderCoinTypes.length === 0) {
+      console.log("No rewards available to claim");
+      return {
+        success: true,
+        digest: "",
+      };
+    }
+
+    // If we have rewards, collect them
+    try {
+      const tx = await sdk.Rewarder.collectRewarderTransactionPayload({
+        coinTypeA: pool.coinTypeA,
+        coinTypeB: pool.coinTypeB,
+        pool_id: poolId,
+        pos_id: positionId,
+        rewarder_coin_types: rewarderCoinTypes,
+        collect_fee: false,
+      });
+
+      // Set explicit gas budget
+      tx.setGasBudget(50000000); // 0.05 SUI
+
+      const res = await wallet.signAndExecuteTransactionBlock({
+        transactionBlock: tx,
+        options: { showEvents: true, showEffects: true },
+      });
+
+      console.log("Rewards successfully collected:", res.digest);
+
+      return {
+        success: true,
+        digest: res.digest || "",
+      };
+    } catch (error) {
+      console.error("Error in reward collection transaction:", error);
+      throw new Error("Failed to collect rewards. Transaction error occurred.");
+    }
+  } catch (error) {
+    console.error("Error in collectRewards:", error);
+    throw error;
   }
-
-  const tx = await sdk.Rewarder.collectRewarderTransactionPayload({
-    coinTypeA: pool.coinTypeA,
-    coinTypeB: pool.coinTypeB,
-    pool_id: poolId,
-    pos_id: positionId,
-    rewarder_coin_types: rewarderCoinTypes,
-    collect_fee: false,
-  });
-  const res = await wallet.signAndExecuteTransactionBlock({
-    transactionBlock: tx,
-    options: { showEvents: true, showEffects: true },
-  });
-
-  return {
-    success: true,
-    digest: res.digest || "",
-  };
 }
 
 /**
  * Fetch all positions owned by an address.
+ * Last Updated: 2025-04-27 02:22:05 UTC by jake1318
  */
 export async function getPositions(
   ownerAddress: string
@@ -806,6 +1118,13 @@ export async function getPositions(
       const id = p.pos_object_id || p.id || p.position_id || p.nft_id || "";
       if (!id) continue; // Skip if no ID found
 
+      // Check if the position has liquidity - skip positions with zero liquidity
+      const liquidity = Number(p.liquidity) || 0;
+      if (liquidity <= 0) {
+        console.log(`Skipping position ${id} with zero liquidity`);
+        continue; // Skip positions with zero liquidity
+      }
+
       // Try to extract the pool id
       let poolAddress = p.pool_id || p.pool || p.poolAddress || p.poolId || "";
 
@@ -814,15 +1133,17 @@ export async function getPositions(
         poolAddress = extractPoolIdFromPosition(p);
       }
 
-      // Return the position object with extracted data
+      // Add the position with non-zero liquidity to the array
       positions.push({
         id,
         poolAddress,
-        liquidity: Number(p.liquidity) || 0,
+        liquidity,
       });
     }
 
-    console.log("Processed positions:", positions);
+    console.log(
+      `Returning ${positions.length} positions with non-zero liquidity`
+    );
     return positions;
   } catch (error) {
     console.error("Error fetching positions:", error);
@@ -834,6 +1155,7 @@ export async function getPositions(
 
 /**
  * Fetch pool metadata for a set of pool addresses.
+ * Last Updated: 2025-04-27 02:22:05 UTC by jake1318
  */
 export async function getPoolsDetailsForPositions(
   addresses: string[]

@@ -1,19 +1,23 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import path from "path";
 
 export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: [
-      // Redirect any `@mysten/sui` to the client entrypoint
-      { find: /^@mysten\/sui$/, replacement: "@mysten/sui/client" },
-      // (optional) if you import transactions bare, you can alias that too:
-      {
-        find: "@mysten/sui/transactions",
-        replacement: "@mysten/sui/transactions",
+  server: {
+    proxy: {
+      "/sui": {
+        target: "https://rpc.ankr.com/sui",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/sui/, ""),
+        configure: (proxy, options) => {
+          // Remove the client-request-method header before forwarding.
+          proxy.on("proxyReq", (proxyReq, req, res) => {
+            proxyReq.removeHeader("client-request-method");
+          });
+        },
       },
-      // your other aliases…
-    ],
+      "/api": {
+        target: "http://localhost:5000", // Change this if your backend runs on another port or URL
+        changeOrigin: true,
+      },
+    },
   },
 });

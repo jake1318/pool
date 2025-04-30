@@ -1,54 +1,6 @@
 :root {
-  // Primary color scheme
-  --color-bg-primary: #0a0b0e;
-  --color-bg-primary-rgb: 10, 11, 14;
-  --color-bg-secondary: #13151c;
-  --color-bg-secondary-rgb: 19, 21, 28;
-  --color-bg-hover: #1f2229;
-  --color-bg-hover-rgb: 31, 34, 41;
-  --color-bg-disabled: #2a2d36;
-  --color-bg-disabled-rgb: 42, 45, 54;
-
-  // Text colors
-  --color-text-primary: #ffffff;
-  --color-text-secondary: #a0a3b1;
-  --color-text-tertiary: #6c7080;
-  --color-text-placeholder: #4d5060;
-  --color-text-disabled: #4d5060;
-  --color-text-on-accent: #ffffff;
-  --color-text-on-error: #ffffff;
-
-  // Accent colors
-  --color-accent: #3773f5;
-  --color-accent-rgb: 55, 115, 245;
-  --color-accent-hover: #4b83f9;
-
-  // Status colors
-  --color-success: #24cd77;
-  --color-success-rgb: 36, 205, 119;
-  --color-success-muted: #1a9057;
-  --color-error: #e5484d;
-  --color-error-rgb: 229, 72, 77;
-  --color-error-hover: #eb5d61;
-  --color-warning: #f5a623;
-  --color-warning-rgb: 245, 166, 35;
-
-  // Border colors
-  --color-border: #2a2d36;
-  --color-border-rgb: 42, 45, 54;
-
-  // Component-specific variables
-  --border-radius-sm: 0.25rem;
-  --border-radius-md: 0.5rem;
-  --border-radius-lg: 0.75rem;
-  --border-radius-xl: 1rem;
-
-  // Token logo sizes
-  --token-logo-sm-size: 26px;
-  --token-logo-size: 36px;
-  --token-logo-lg-size: 48px;
-
-  // Animations
-  --transition-fast: 0.15s;
-  --transition-normal: 0.3s;
+  --primary-color: #00ffff;
+  --text-color: #ffffff;
+  --background-dark: #05050f;
+  --background-darker: #030308;
 }

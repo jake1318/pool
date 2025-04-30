@@ -1,42 +1,55 @@
-import React from "react";
-import { WalletProvider } from "@suiet/wallet-kit";
-import {
-  BrowserRouter as Router,
-  Routes,
-  Route,
-  Navigate,
-} from "react-router-dom";
-import { ConnectButton } from "@suiet/wallet-kit";
-import Home from "./pages/Home";
-import Lending from "./pages/Lending";
-import Pools from "./pages/Pools";
-import Positions from "./pages/Positions";
-import "./styles/main.scss";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { SuiProvider } from "./providers/SuiProvider";
+import { WalletProvider } from "./contexts/WalletContext";
+import { BirdeyeProvider } from "./contexts/BirdeyeContext";
+import Navbar from "./components/Navbar/Navbar";
+import Footer from "./components/Footer/Footer";
+import Home from "./pages/Home/Home";
+import Swap from "./pages/Swap/Swap";
+import SearchPage from "./pages/SearchPage/SearchPage";
+import Dex from "./pages/Dex/Dex";
+import Portfolio from "./pages/PortfolioPage/PortfolioPage";
+import Pools from "./pages/PoolsPage/Pools";
+import Positions from "./pages/PoolsPage/Positions";
+import "./App.scss";
 
-const App: React.FC = () => {
+function AppContent() {
   return (
-    <WalletProvider>
-      <Router>
-        <div className="app min-h-screen bg-black">
-          <header className="py-4 px-6 border-b border-gray-800 flex justify-between items-center">
-            <h1 className="text-xl font-bold text-white">
-              Sui Liquidity Pools
-            </h1>
-            <ConnectButton />
-          </header>
+    <Router>
+      <div className="app-container">
+        {/* Background visual elements */}
+        <div className="bg-grid"></div>
+        <div className="bg-glow glow-1"></div>
+        <div className="bg-glow glow-2"></div>
 
+        <Navbar />
+        <main>
           <Routes>
             <Route path="/" element={<Home />} />
+            <Route path="/swap" element={<Swap />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/dex" element={<Dex />} />
             <Route path="/pools" element={<Pools />} />
-            <Route path="/lending" element={<Lending />} />
             <Route path="/positions" element={<Positions />} />
-            {/* Redirect any unknown paths to Home */}
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="/portfolio" element={<Portfolio />} />
           </Routes>
-        </div>
-      </Router>
-    </WalletProvider>
+        </main>
+        <Footer />
+      </div>
+    </Router>
   );
-};
+}
+
+function App() {
+  return (
+    <SuiProvider>
+      <WalletProvider>
+        <BirdeyeProvider>
+          <AppContent />
+        </BirdeyeProvider>
+      </WalletProvider>
+    </SuiProvider>
+  );
+}
 
 export default App;

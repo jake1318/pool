@@ -1,17 +1,26 @@
-// format.ts
-// ● formatUSD: $1,234,567.89
-// ● formatPercent: 12.34%
-export function formatUSD(value: number): string {
+/**
+ * Format a number as a USD currency string.
+ * @param value Number to format.
+ * @returns String with a leading '$' and the value formatted to 7 decimal places.
+ */
+export function formatUsd(value: number): string {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 2,
+    minimumFractionDigits: 7,
+    maximumFractionDigits: 7,
   }).format(value);
 }
 
 /**
- * value is a decimal ratio, e.g. 0.1234 → "12.34%"
+ * Format a number as a percentage string.
+ * @param value Number to format (e.g. 0.156 for 15.6%).
+ * @returns String with '%' symbol (2 decimal places).
  */
-export function formatPercent(value: number): string {
-  return `${(value * 100).toFixed(2)}%`;
+export function formatPercentage(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "percent",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
 }
